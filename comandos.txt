@@ -1,0 +1,3 @@
+cd C:\Users\clari\OneDrive\Escritorio\tesis
+venv\Scripts\activate
+uvicorn main:app --reload
