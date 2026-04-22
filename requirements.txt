@@ -1,3 +1,9 @@
-six==1.17.0
-virtualbox==2.1.1
+fastapi
 uvicorn
+sqlalchemy
+psycopg2-binary
+bcrypt
+pydantic
+python-multipart
+python-dotenv
+openai
