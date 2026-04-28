@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pypdf import PdfReader
@@ -55,7 +55,11 @@ def get_db():
         db.close()
 
 @app.post("/api/generar-cuestionario")
-async def generar_cuestionario(archivo: UploadFile = File(...), db: Session = Depends(get_db)):
+async def generar_cuestionario(
+    archivo: UploadFile = File(...), 
+    usuario_id: int = Form(...), # <-- AQUÍ RECIBIMOS AL DUEÑO
+    db: Session = Depends(get_db)
+):
     if not archivo.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
     
@@ -114,15 +118,16 @@ async def generar_cuestionario(archivo: UploadFile = File(...), db: Session = De
         
         cuestionario_json = json.loads(respuesta.text)
         
-        # --- NUEVA LÓGICA: GUARDAR EN POSTGRESQL ---
+        # --- AQUÍ GUARDAMOS EL EXAMEN JUNTO CON SU DUEÑO ---
         print("💾 Guardando cuestionario en la nube (Neon)...")
         nuevo_registro = Cuestionario(
             nombre_documento=archivo.filename,
-            preguntas_json=cuestionario_json
+            preguntas_json=cuestionario_json,
+            usuario_id=usuario_id # <-- AQUÍ ETIQUETAMOS EL EXAMEN
         )
         db.add(nuevo_registro)
         db.commit()
-        db.refresh(nuevo_registro) # Obtiene el ID asignado por la base de datos
+        db.refresh(nuevo_registro) 
         # ---------------------------------------------
         
         return {
@@ -141,11 +146,18 @@ async def generar_cuestionario(archivo: UploadFile = File(...), db: Session = De
             os.remove(ruta_temp)
 
 @app.get("/api/cuestionarios")
-def obtener_historial(db: Session = Depends(get_db)):
-    print("📚 Consultando el historial de cuestionarios...")
+def obtener_historial(usuario_id: int = None, rol: str = None, db: Session = Depends(get_db)):
+    print("📚 Consultando el historial filtrado...")
     try:
-        # Buscamos todos los registros y los ordenamos por ID descendente
-        historial = db.query(Cuestionario).order_by(Cuestionario.id.desc()).all()
+        if rol == 'estudiante':
+            # Estudiantes ven TODOS los publicados
+            historial = db.query(Cuestionario).filter(Cuestionario.publicado == True).order_by(Cuestionario.id.desc()).all()
+        elif rol == 'docente' and usuario_id:
+            # Docentes ven SOLO los suyos
+            historial = db.query(Cuestionario).filter(Cuestionario.usuario_id == usuario_id).order_by(Cuestionario.id.desc()).all()
+        else:
+            historial = []
+            
         return {"data": historial}
     except Exception as e:
         print(f"❌ Error al consultar base de datos: {e}")

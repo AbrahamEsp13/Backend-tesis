@@ -25,6 +25,7 @@ class Cuestionario(Base):
     preguntas_json = Column(JSON, nullable=False) 
     publicado = Column(Boolean, default=False) # <--- NUEVO INTERRUPTOR (Por defecto en Borrador)
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+    usuario_id = Column(Integer, index=True)
 
 class Usuario(Base):
     __tablename__ = "usuarios"
