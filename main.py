@@ -58,6 +58,7 @@ def get_db():
 async def generar_cuestionario(
     archivo: UploadFile = File(...), 
     usuario_id: int = Form(...), # <-- AQUÍ RECIBIMOS AL DUEÑO
+    num_preguntas: int = Form(5),
     db: Session = Depends(get_db)
 ):
     if not archivo.filename.endswith(".pdf"):
@@ -87,10 +88,7 @@ async def generar_cuestionario(
         prompt_final = f"""
         Eres un profesor experto en pedagogía. Genera una evaluación basada ÚNICAMENTE en el contexto proporcionado. No inventes información.
         
-        Genera exactamente 3 preguntas de opción múltiple. Cada pregunta debe corresponder a un nivel cognitivo diferente de la Taxonomía de Bloom:
-        1. Recordar
-        2. Comprender
-        3. Analizar
+        Genera exactamente {num_preguntas} preguntas de opción múltiple. Las preguntas deben estar distribuidas en los diferentes niveles cognitivos de la Taxonomía de Bloom (Recordar, Comprender, Aplicar, Analizar, Evaluar, Crear).
         
         El formato de salida DEBE ser un arreglo JSON con la siguiente estructura:
         [
