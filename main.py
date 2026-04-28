@@ -186,6 +186,21 @@ def publicar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
     return {"mensaje": "Cuestionario publicado exitosamente"}
 
 
+@app.put("/api/cuestionarios/{cuestionario_id}/despublicar")
+def despublicar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
+    # Buscamos el cuestionario
+    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
+    
+    if not cuestionario:
+        raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
+    
+    # Cambiamos el interruptor a False (lo regresamos a borrador)
+    cuestionario.publicado = False
+    db.commit()
+    
+    return {"mensaje": "Cuestionario ocultado exitosamente"}
+
+
 @app.delete("/api/cuestionarios/{cuestionario_id}")
 def eliminar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
     print(f"🗑️ Solicitud para eliminar el cuestionario ID: {cuestionario_id}")
