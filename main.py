@@ -118,24 +118,32 @@ async def generar_cuestionario(
         
         cuestionario_json = json.loads(respuesta.text)
         
-        # --- AQUÍ GUARDAMOS EL EXAMEN JUNTO CON SU DUEÑO ---
-        print("💾 Guardando cuestionario en la nube (Neon)...")
-        nuevo_registro = Cuestionario(
-            nombre_documento=archivo.filename,
-            preguntas_json=cuestionario_json,
-            usuario_id=usuario_id # <-- AQUÍ ETIQUETAMOS EL EXAMEN
-        )
-        db.add(nuevo_registro)
-        db.commit()
-        db.refresh(nuevo_registro) 
-        # ---------------------------------------------
+        # --- NUEVA LÓGICA CON REINTENTOS PARA NEON SERVERLESS ---
+        import time # <-- Asegúrate de que esto esté aquí o hasta arriba de tu archivo
+        max_reintentos = 3
         
-        return {
-            "mensaje": "Cuestionario generado y guardado con éxito", 
-            "id_cuestionario": nuevo_registro.id,
-            "total_preguntas": len(cuestionario_json),
-            "data": cuestionario_json
-        }
+        for intento in range(max_reintentos):
+            try:
+                print(f"💾 Intentando guardar en Neon (Intento {intento + 1})...")
+                nuevo_registro = Cuestionario(
+                    nombre_documento=archivo.filename,
+                    preguntas_json=cuestionario_json,
+                    usuario_id=usuario_id
+                )
+                db.add(nuevo_registro)
+                db.commit()
+                db.refresh(nuevo_registro)
+                break # Si tiene éxito, rompemos el ciclo de reintentos
+            except Exception as e:
+                # Si falla por la conexión SSL, cancelamos el intento fallido
+                db.rollback() 
+                if intento < max_reintentos - 1:
+                    print(f"⚠️ Neon estaba dormido o cortó la conexión. Reintentando en 2 segundos...")
+                    time.sleep(2) # Esperamos a que Neon despierte
+                else:
+                    print(f"❌ Error crítico en base de datos tras 3 intentos: {e}")
+                    raise HTTPException(status_code=500, detail="Error de conexión con la base de datos. Por favor, intenta de nuevo.")
+        # ---------------------------------------------
         
     except Exception as e:
         print(f"❌ Error interno: {e}")

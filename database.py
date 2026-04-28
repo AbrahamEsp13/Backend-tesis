@@ -12,7 +12,7 @@ if not DATABASE_URL:
     raise ValueError("⚠️ No se encontró DATABASE_URL en el archivo .env")
 
 # 2. Configurar el motor de conexión
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
