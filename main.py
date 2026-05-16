@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -9,11 +10,10 @@ from google import genai
 from google.genai import types
 import bcrypt
 from pydantic import BaseModel
-from database import Usuario # Asegúrate de importar tu nueva tabla
 
 # --- NUEVAS IMPORTACIONES DE BASE DE DATOS ---
 from sqlalchemy.orm import Session
-from database import SessionLocal, Cuestionario 
+from database import SessionLocal, Cuestionario, Usuario
 
 # Modelos para recibir datos desde React
 class RegistroUsuario(BaseModel):
@@ -57,8 +57,9 @@ def get_db():
 @app.post("/api/generar-cuestionario")
 async def generar_cuestionario(
     archivo: UploadFile = File(...), 
-    usuario_id: int = Form(...), # <-- AQUÍ RECIBIMOS AL DUEÑO
+    usuario_id: int = Form(...), 
     num_preguntas: int = Form(5),
+    nombre_examen: str = Form(...), # <--- 1. RECIBIMOS EL NOMBRE DESDE REACT
     db: Session = Depends(get_db)
 ):
     if not archivo.filename.endswith(".pdf"):
@@ -116,14 +117,14 @@ async def generar_cuestionario(
         
         cuestionario_json = json.loads(respuesta.text)
         
-        # --- NUEVA LÓGICA CON REINTENTOS PARA NEON SERVERLESS ---
-        import time # <-- Asegúrate de que esto esté aquí o hasta arriba de tu archivo
+        # --- LÓGICA CON REINTENTOS PARA NEON SERVERLESS ---
         max_reintentos = 3
         
         for intento in range(max_reintentos):
             try:
                 print(f"💾 Intentando guardar en Neon (Intento {intento + 1})...")
                 nuevo_registro = Cuestionario(
+                    nombre_examen=nombre_examen,      # <--- 2. LO GUARDAMOS EN POSTGRESQL
                     nombre_documento=archivo.filename,
                     preguntas_json=cuestionario_json,
                     usuario_id=usuario_id
@@ -131,18 +132,19 @@ async def generar_cuestionario(
                 db.add(nuevo_registro)
                 db.commit()
                 db.refresh(nuevo_registro)
-                break # Si tiene éxito, rompemos el ciclo de reintentos
+                break 
             except Exception as e:
-                # Si falla por la conexión SSL, cancelamos el intento fallido
                 db.rollback() 
                 if intento < max_reintentos - 1:
                     print(f"⚠️ Neon estaba dormido o cortó la conexión. Reintentando en 2 segundos...")
-                    time.sleep(2) # Esperamos a que Neon despierte
+                    time.sleep(2) 
                 else:
                     print(f"❌ Error crítico en base de datos tras 3 intentos: {e}")
                     raise HTTPException(status_code=500, detail="Error de conexión con la base de datos. Por favor, intenta de nuevo.")
-        # ---------------------------------------------
         
+        # <-- 3. RETORNAMOS ÉXITO AL FRONTEND
+        return {"status": "success", "mensaje": "Cuestionario generado correctamente"}
+                    
     except Exception as e:
         print(f"❌ Error interno: {e}")
         raise HTTPException(status_code=500, detail="Ocurrió un error al procesar el documento.")
@@ -156,10 +158,8 @@ def obtener_historial(usuario_id: int = None, rol: str = None, db: Session = Dep
     print("📚 Consultando el historial filtrado...")
     try:
         if rol == 'estudiante':
-            # Estudiantes ven TODOS los publicados
             historial = db.query(Cuestionario).filter(Cuestionario.publicado == True).order_by(Cuestionario.id.desc()).all()
         elif rol == 'docente' and usuario_id:
-            # Docentes ven SOLO los suyos
             historial = db.query(Cuestionario).filter(Cuestionario.usuario_id == usuario_id).order_by(Cuestionario.id.desc()).all()
         else:
             historial = []
@@ -169,47 +169,38 @@ def obtener_historial(usuario_id: int = None, rol: str = None, db: Session = Dep
         print(f"❌ Error al consultar base de datos: {e}")
         raise HTTPException(status_code=500, detail="Error al obtener el historial.")
 
-
 @app.put("/api/cuestionarios/{cuestionario_id}/publicar")
 def publicar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
-    # Buscamos el cuestionario en la base de datos
     cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
     
     if not cuestionario:
         raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
     
-    # Cambiamos el interruptor a True
     cuestionario.publicado = True
     db.commit()
     return {"mensaje": "Cuestionario publicado exitosamente"}
 
-
 @app.put("/api/cuestionarios/{cuestionario_id}/despublicar")
 def despublicar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
-    # Buscamos el cuestionario
     cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
     
     if not cuestionario:
         raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
     
-    # Cambiamos el interruptor a False (lo regresamos a borrador)
     cuestionario.publicado = False
     db.commit()
     
     return {"mensaje": "Cuestionario ocultado exitosamente"}
 
-
 @app.delete("/api/cuestionarios/{cuestionario_id}")
 def eliminar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
     print(f"🗑️ Solicitud para eliminar el cuestionario ID: {cuestionario_id}")
     
-    # 1. Buscamos el cuestionario
     cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
     
     if not cuestionario:
         raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
     
-    # 2. Lo eliminamos de la base de datos
     db.delete(cuestionario)
     db.commit()
     
@@ -217,16 +208,12 @@ def eliminar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
 
 @app.put("/api/cuestionarios/{id}")
 def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, db: Session = Depends(get_db)):
-    # 1. Buscamos el cuestionario en la base de datos
     cuestionario = db.query(Cuestionario).filter(Cuestionario.id == id).first()
     
     if not cuestionario:
         raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
     
-    # 2. Reemplazamos el JSON viejo con el nuevo JSON editado
     cuestionario.preguntas_json = datos.preguntas_json
-    
-    # 3. Guardamos los cambios
     db.commit()
     
     return {"mensaje": "Cuestionario actualizado correctamente"}
@@ -237,16 +224,13 @@ def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, db: Session 
 
 @app.post("/api/auth/register")
 def registrar_usuario(datos: RegistroUsuario, db: Session = Depends(get_db)):
-    # 1. Verificar si el correo ya existe
     usuario_existente = db.query(Usuario).filter(Usuario.correo == datos.correo).first()
     if usuario_existente:
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
     
-    # 2. Encriptar la contraseña (forma nativa y moderna)
     salt = bcrypt.gensalt()
     password_encriptada = bcrypt.hashpw(datos.password.encode('utf-8'), salt).decode('utf-8')
     
-    # 3. Guardar en la base de datos
     nuevo_usuario = Usuario(
         nombre=datos.nombre,
         correo=datos.correo,
@@ -261,16 +245,13 @@ def registrar_usuario(datos: RegistroUsuario, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login")
 def iniciar_sesion(datos: LoginUsuario, db: Session = Depends(get_db)):
-    # 1. Buscar al usuario por su correo
     usuario = db.query(Usuario).filter(Usuario.correo == datos.correo).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Correo no encontrado")
     
-    # 2. Verificar que la contraseña coincida con el hash (usando bcrypt nativo)
     if not bcrypt.checkpw(datos.password.encode('utf-8'), usuario.password_hash.encode('utf-8')):
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
     
-    # 3. ¡Todo correcto! Devolvemos los datos del usuario
     return {
         "mensaje": "Login exitoso", 
         "usuario": {

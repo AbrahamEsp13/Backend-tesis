@@ -18,12 +18,13 @@ Base = declarative_base()
 
 # 3. Definir la Tabla Entidad-Relación
 class Cuestionario(Base):
-    __tablename__ = "cuestionarios_v2" # <--- NUEVO NOMBRE DE TABLA PARA EVITAR CONFLICTOS
+    __tablename__ = "cuestionarios_v3" # <--- CAMBIADO A V3 PARA CREAR LA TABLA NUEVA
 
     id = Column(Integer, primary_key=True, index=True)
+    nombre_examen = Column(String) # <--- NUEVO CAMPO PARA EL TÍTULO DEL DOCENTE
     nombre_documento = Column(String, index=True)
     preguntas_json = Column(JSON, nullable=False) 
-    publicado = Column(Boolean, default=False) # <--- NUEVO INTERRUPTOR (Por defecto en Borrador)
+    publicado = Column(Boolean, default=False) 
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
     usuario_id = Column(Integer, index=True)
 
@@ -32,14 +33,10 @@ class Usuario(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, index=True)
-    correo = Column(String, unique=True, index=True) # unique=True evita correos duplicados
-    password_hash = Column(String) # Aquí guardaremos la contraseña encriptada
+    correo = Column(String, unique=True, index=True) 
+    password_hash = Column(String) 
     rol = Column(String) # 'docente' o 'estudiante'
     fecha_registro = Column(DateTime, default=datetime.datetime.utcnow)
 
-
 # Crear las tablas en Neon (si no existen)
 Base.metadata.create_all(bind=engine)
-
-
-
