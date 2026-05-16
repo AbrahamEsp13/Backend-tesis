@@ -129,7 +129,7 @@ async def generar_cuestionario(
                     nombre_documento=archivo.filename,
                     materia=materia,
                     preguntas_json=cuestionario_json,
-                    usuario_id=usuario_id
+                    usuario_id=usuario_id,
                     compartido_comunidad=False
                 )
                 db.add(nuevo_registro)
