@@ -60,6 +60,7 @@ async def generar_cuestionario(
     usuario_id: int = Form(...), 
     num_preguntas: int = Form(5),
     nombre_examen: str = Form(...), # <--- 1. RECIBIMOS EL NOMBRE DESDE REACT
+    materia: str = Form(...),
     db: Session = Depends(get_db)
 ):
     if not archivo.filename.endswith(".pdf"):
@@ -124,8 +125,9 @@ async def generar_cuestionario(
             try:
                 print(f"💾 Intentando guardar en Neon (Intento {intento + 1})...")
                 nuevo_registro = Cuestionario(
-                    nombre_examen=nombre_examen,      # <--- 2. LO GUARDAMOS EN POSTGRESQL
+                    nombre_examen=nombre_examen,      
                     nombre_documento=archivo.filename,
+                    materia=materia,
                     preguntas_json=cuestionario_json,
                     usuario_id=usuario_id
                 )
