@@ -18,11 +18,13 @@ Base = declarative_base()
 
 # 3. Definir la Tabla Entidad-Relación
 class Cuestionario(Base):
-    __tablename__ = "cuestionarios_v3" # <--- CAMBIADO A V3 PARA CREAR LA TABLA NUEVA
+    __tablename__ = "cuestionarios_v3" 
 
     id = Column(Integer, primary_key=True, index=True)
-    nombre_examen = Column(String) # <--- NUEVO CAMPO PARA EL TÍTULO DEL DOCENTE
+    nombre_examen = Column(String) 
     nombre_documento = Column(String, index=True)
+    materia = Column(String)                               
+    compartido_comunidad = Column(Boolean, default=False)  
     preguntas_json = Column(JSON, nullable=False) 
     publicado = Column(Boolean, default=False) 
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
