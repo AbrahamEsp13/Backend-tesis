@@ -144,7 +144,9 @@ async def generar_cuestionario(
                 else:
                     print(f"❌ Error crítico en base de datos tras 3 intentos: {e}")
                     raise HTTPException(status_code=500, detail="Error de conexión con la base de datos.")
-        
+
+        usuario.creditos_disponibles -= 1
+        db.commit()
         return {"status": "success", "mensaje": "Cuestionario generado correctamente"}
                     
     except Exception as e:
@@ -321,6 +323,7 @@ def iniciar_sesion(datos: LoginUsuario, db: Session = Depends(get_db)):
             "id": usuario.id,
             "nombre": usuario.nombre,
             "correo": usuario.correo,
-            "rol": usuario.rol
+            "rol": usuario.rol,
+            "creditos_disponibles": usuario.creditos_disponibles
         }
     }
