@@ -80,7 +80,10 @@ async def generar_cuestionario(
 
     # --- 2. VERIFICACIÓN DE SALDO ---
     if usuario.creditos_disponibles <= 0:
-        raise HTTPException(status_code=403, detail="Créditos agotados por hoy.")
+        raise HTTPException(
+            status_code=403, 
+            detail="Has agotado tus créditos de IA. Por favor, espera a la medianoche para que tu saldo se regenere automáticamente."
+        )
 
     if not archivo.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
