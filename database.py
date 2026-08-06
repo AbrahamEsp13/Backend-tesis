@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Date
 from sqlalchemy.orm import declarative_base, sessionmaker
 import datetime
 
