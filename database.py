@@ -40,6 +40,8 @@ class Usuario(Base):
     password_hash = Column(String) 
     rol = Column(String) # 'docente' o 'estudiante'
     fecha_registro = Column(DateTime, default=datetime.datetime.utcnow)
+    creditos_disponibles = Column(Integer, default=5)
+    fecha_ultimo_uso = Column(Date, default=datetime.date.today)
 
 # Crear las tablas en Neon (si no existen)
 Base.metadata.create_all(bind=engine)

@@ -65,6 +65,22 @@ async def generar_cuestionario(
     materia: str = Form(...),
     db: Session = Depends(get_db)
 ):
+
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    # --- 1. REGENERACIÓN DE CRÉDITOS (EVALUACIÓN PEREZOSA) ---
+    hoy = datetime.date.today()
+    if usuario.fecha_ultimo_uso < hoy:
+        usuario.creditos_disponibles = 5
+        usuario.fecha_ultimo_uso = hoy
+        db.commit() 
+
+    # --- 2. VERIFICACIÓN DE SALDO ---
+    if usuario.creditos_disponibles <= 0:
+        raise HTTPException(status_code=403, detail="Créditos agotados por hoy.")
+
     if not archivo.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
     
@@ -146,6 +162,7 @@ async def generar_cuestionario(
                     raise HTTPException(status_code=500, detail="Error de conexión con la base de datos.")
 
         usuario.creditos_disponibles -= 1
+        usuario.fecha_ultimo_uso = hoy 
         db.commit()
         return {"status": "success", "mensaje": "Cuestionario generado correctamente"}
                     
