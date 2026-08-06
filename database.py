@@ -20,7 +20,6 @@ Base = declarative_base()
 class Cuestionario(Base):
     __tablename__ = "cuestionarios_v3" 
 
-    creditos_disponibles = Column(Integer, default=5)
     id = Column(Integer, primary_key=True, index=True)
     nombre_examen = Column(String) 
     nombre_documento = Column(String, index=True)
@@ -34,6 +33,7 @@ class Cuestionario(Base):
 class Usuario(Base):
     __tablename__ = "usuarios"
 
+    creditos_disponibles = Column(Integer, default=5)
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, index=True)
     correo = Column(String, unique=True, index=True) 
