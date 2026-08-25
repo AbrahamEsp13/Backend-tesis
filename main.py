@@ -33,6 +33,13 @@ class ActualizarCuestionario(BaseModel):
 class ClonarRequest(BaseModel):
     usuario_id: int # ID del docente que está clonando el examen
 
+class PerfilUpdate(BaseModel):
+    nombre: str
+    biografia: str | None = None
+    institucion: str | None = None
+    especialidad: str | None = None
+    foto_perfil: str | None = None
+
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -177,6 +184,42 @@ async def generar_cuestionario(
     finally:
         if os.path.exists(ruta_temp):
             os.remove(ruta_temp)
+
+
+# Agrégalo como un nuevo endpoint
+@app.put("/api/usuarios/{usuario_id}/perfil")
+def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, db: Session = Depends(get_db)):
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    usuario.nombre = datos.nombre
+    usuario.biografia = datos.biografia
+    usuario.institucion = datos.institucion
+    usuario.especialidad = datos.especialidad
+    
+    # Solo actualizamos la foto si el frontend envió una nueva
+    if datos.foto_perfil:
+        usuario.foto_perfil = datos.foto_perfil
+        
+    db.commit()
+    db.refresh(usuario)
+    
+    # Retornamos el usuario actualizado para que React actualice el localStorage
+    return {
+        "status": "success",
+        "usuario": {
+            "id": usuario.id,
+            "nombre": usuario.nombre,
+            "correo": usuario.correo,
+            "rol": usuario.rol,
+            "creditos_disponibles": usuario.creditos_disponibles,
+            "foto_perfil": usuario.foto_perfil,
+            "biografia": usuario.biografia,
+            "institucion": usuario.institucion,
+            "especialidad": usuario.especialidad
+        }
+    }
 
 @app.get("/api/cuestionarios")
 def obtener_historial(usuario_id: int = None, rol: str = None, db: Session = Depends(get_db)):

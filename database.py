@@ -43,5 +43,10 @@ class Usuario(Base):
     creditos_disponibles = Column(Integer, default=5)
     fecha_ultimo_uso = Column(Date, default=datetime.date.today)
 
+    foto_perfil = Column(String, nullable=True)
+    biografia = Column(String, nullable=True)
+    institucion = Column(String, nullable=True)
+    especialidad = Column(String, nullable=True)
+
 # Crear las tablas en Neon (si no existen)
 Base.metadata.create_all(bind=engine)
