@@ -10,18 +10,22 @@ import chromadb
 from google import genai
 from google.genai import types
 import bcrypt
+from typing import Literal
 from pydantic import BaseModel
 
 # --- IMPORTACIONES DE BASE DE DATOS ---
 from sqlalchemy.orm import Session
-from database import SessionLocal, Cuestionario, Usuario
+from database import Cuestionario, Usuario, get_db
+
+# --- AUTENTICACIÓN (JWT) ---
+from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
 
 # Modelos para recibir datos desde React
 class RegistroUsuario(BaseModel):
     nombre: str
     correo: str
     password: str
-    rol: str
+    rol: Literal["docente", "estudiante"]
 
 class LoginUsuario(BaseModel):
     correo: str
@@ -29,9 +33,6 @@ class LoginUsuario(BaseModel):
 
 class ActualizarCuestionario(BaseModel):
     preguntas_json: list
-
-class ClonarRequest(BaseModel):
-    usuario_id: int # ID del docente que está clonando el examen
 
 class PerfilUpdate(BaseModel):
     nombre: str
@@ -56,13 +57,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 CREDITOS_DIARIOS = 5
 
@@ -90,17 +84,13 @@ def usuario_a_dict(usuario: Usuario) -> dict:
 
 @app.post("/api/generar-cuestionario")
 async def generar_cuestionario(
-    archivo: UploadFile = File(...), 
-    usuario_id: int = Form(...), 
+    archivo: UploadFile = File(...),
     num_preguntas: int = Form(5),
-    nombre_examen: str = Form(...), 
+    nombre_examen: str = Form(...),
     materia: str = Form(...),
+    usuario: Usuario = Depends(docente_actual),
     db: Session = Depends(get_db)
 ):
-
-    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
     # --- 1. REGENERACIÓN DE CRÉDITOS (EVALUACIÓN PEREZOSA) ---
     regenerar_creditos(usuario, db)
@@ -177,7 +167,7 @@ async def generar_cuestionario(
                     nombre_documento=archivo.filename,
                     materia=materia,
                     preguntas_json=cuestionario_json, 
-                    usuario_id=usuario_id,            
+                    usuario_id=usuario.id,
                     compartido_comunidad=False
                 )
                 db.add(nuevo_registro)
@@ -212,20 +202,16 @@ async def generar_cuestionario(
 
 
 @app.get("/api/usuarios/{usuario_id}/creditos")
-def obtener_creditos(usuario_id: int, db: Session = Depends(get_db)):
-    """Saldo de créditos del día (ya regenerado si cambió la fecha)."""
-    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+def obtener_creditos(usuario_id: int, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    """Saldo de créditos del día (ya regenerado si cambió la fecha). Solo los propios."""
+    exigir_mismo_usuario(usuario_id, usuario)
     regenerar_creditos(usuario, db)
     return {"creditos_disponibles": usuario.creditos_disponibles}
 
 @app.put("/api/usuarios/{usuario_id}/perfil")
-def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, db: Session = Depends(get_db)):
-    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    exigir_mismo_usuario(usuario_id, usuario)
+
     usuario.nombre = datos.nombre
     usuario.biografia = datos.biografia
     usuario.institucion = datos.institucion
@@ -245,55 +231,41 @@ def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, db: Session = Depend
     }
 
 @app.get("/api/cuestionarios")
-def obtener_historial(usuario_id: int = None, rol: str = None, db: Session = Depends(get_db)):
+def obtener_historial(usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    """Docente: sus cuestionarios. Estudiante: los publicados. (El rol sale del token.)"""
     try:
-        if rol == 'estudiante':
+        if usuario.rol == 'estudiante':
             historial = db.query(Cuestionario).filter(Cuestionario.publicado == True).order_by(Cuestionario.id.desc()).all()
-        elif rol == 'docente' and usuario_id:
-            historial = db.query(Cuestionario).filter(Cuestionario.usuario_id == usuario_id).order_by(Cuestionario.id.desc()).all()
         else:
-            historial = []
-            
+            historial = db.query(Cuestionario).filter(Cuestionario.usuario_id == usuario.id).order_by(Cuestionario.id.desc()).all()
         return {"data": historial}
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error al obtener el historial.")
 
 @app.put("/api/cuestionarios/{cuestionario_id}/publicar")
-def publicar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
-    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
-    if not cuestionario:
-        raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
-    
+def publicar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     cuestionario.publicado = True
     db.commit()
     return {"mensaje": "Cuestionario publicado exitosamente"}
 
 @app.put("/api/cuestionarios/{cuestionario_id}/despublicar")
-def despublicar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
-    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
-    if not cuestionario:
-        raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
-    
+def despublicar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     cuestionario.publicado = False
     db.commit()
     return {"mensaje": "Cuestionario ocultado exitosamente"}
 
 @app.delete("/api/cuestionarios/{cuestionario_id}")
-def eliminar_cuestionario(cuestionario_id: int, db: Session = Depends(get_db)):
-    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
-    if not cuestionario:
-        raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
-    
+def eliminar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     db.delete(cuestionario)
     db.commit()
     return {"mensaje": "Cuestionario eliminado exitosamente"}
 
 @app.put("/api/cuestionarios/{id}")
-def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, db: Session = Depends(get_db)):
-    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == id).first()
-    if not cuestionario:
-        raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
-    
+def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    cuestionario = cuestionario_propio(id, usuario, db)
     cuestionario.preguntas_json = datos.preguntas_json
     db.commit()
     return {"mensaje": "Cuestionario actualizado correctamente"}
@@ -304,7 +276,7 @@ def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, db: Session 
 # ==========================================================
 
 @app.get("/api/comunidad/cuestionarios")
-def obtener_cuestionarios_comunidad(db: Session = Depends(get_db)):
+def obtener_cuestionarios_comunidad(usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     """Obtiene todos los exámenes compartidos públicamente haciendo un JOIN para traer el nombre del autor"""
     try:
         registro_compartidos = db.query(
@@ -334,30 +306,30 @@ def obtener_cuestionarios_comunidad(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Error al cargar la comunidad.")
 
 @app.put("/api/cuestionarios/{cuestionario_id}/compartir")
-def compartir_en_comunidad(cuestionario_id: int, db: Session = Depends(get_db)):
+def compartir_en_comunidad(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
     """Cambia el interruptor para hacer el examen público en el mercado comunitario"""
-    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
-    if not cuestionario:
-        raise HTTPException(status_code=404, detail="Cuestionario no encontrado")
-    
+    cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     cuestionario.compartido_comunidad = True
     db.commit()
     return {"status": "success", "mensaje": "Examen compartido en la comunidad con éxito"}
 
 @app.post("/api/cuestionarios/{cuestionario_id}/clonar")
-def clonar_cuestionario(cuestionario_id: int, datos: ClonarRequest, db: Session = Depends(get_db)):
-    """Toma un examen de la comunidad, crea un clon exacto añadiendo '(Copia)' y se lo asigna al nuevo usuario_id"""
+def clonar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    """Toma un examen de la comunidad (o uno propio), crea un clon añadiendo '(Copia)' y se lo asigna al docente del token"""
     cuestionario_original = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
     if not cuestionario_original:
         raise HTTPException(status_code=404, detail="Cuestionario base no encontrado")
-        
+    # Solo se pueden clonar exámenes compartidos en la comunidad (o los propios), no los privados de otros
+    if not cuestionario_original.compartido_comunidad and cuestionario_original.usuario_id != usuario.id:
+        raise HTTPException(status_code=403, detail="Este cuestionario no está compartido en la comunidad.")
+
     try:
         nuevo_clon = Cuestionario(
             nombre_examen=f"{cuestionario_original.nombre_examen} (Copia)",
             nombre_documento=cuestionario_original.nombre_documento,
             materia=cuestionario_original.materia,
             preguntas_json=cuestionario_original.preguntas_json,
-            usuario_id=datos.usuario_id, # <--- Se asigna al nuevo docente que lo clonó
+            usuario_id=usuario.id,       # <--- Se asigna al docente que lo clonó (del token)
             publicado=False,             # Nace como borrador privado
             compartido_comunidad=False   # No se vuelve a auto-compartir
         )
@@ -407,5 +379,6 @@ def iniciar_sesion(datos: LoginUsuario, db: Session = Depends(get_db)):
     regenerar_creditos(usuario, db)
     return {
         "mensaje": "Login exitoso",
+        "token": crear_token(usuario),
         "usuario": usuario_a_dict(usuario)
     }

@@ -23,6 +23,14 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+def get_db():
+    """Dependencia de FastAPI: una sesión de BD por petición."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 # 3. Definir la Tabla Entidad-Relación
 class Cuestionario(Base):
     __tablename__ = "cuestionarios_v3" 

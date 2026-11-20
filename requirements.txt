@@ -10,3 +10,4 @@ openai
 pypdf
 chromadb
 google-genai
+PyJWT>=2.8,<3
