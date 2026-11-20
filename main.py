@@ -64,6 +64,30 @@ def get_db():
     finally:
         db.close()
 
+CREDITOS_DIARIOS = 5
+
+def regenerar_creditos(usuario: Usuario, db: Session):
+    """Evaluación perezosa: si el último uso fue antes de hoy, restablece los créditos del día."""
+    hoy = datetime.date.today()
+    if usuario.fecha_ultimo_uso is None or usuario.fecha_ultimo_uso < hoy:
+        usuario.creditos_disponibles = CREDITOS_DIARIOS
+        usuario.fecha_ultimo_uso = hoy
+        db.commit()
+
+def usuario_a_dict(usuario: Usuario) -> dict:
+    """Datos del usuario que se envían al frontend (nunca incluye password_hash)."""
+    return {
+        "id": usuario.id,
+        "nombre": usuario.nombre,
+        "correo": usuario.correo,
+        "rol": usuario.rol,
+        "creditos_disponibles": usuario.creditos_disponibles,
+        "foto_perfil": usuario.foto_perfil,
+        "biografia": usuario.biografia,
+        "institucion": usuario.institucion,
+        "especialidad": usuario.especialidad,
+    }
+
 @app.post("/api/generar-cuestionario")
 async def generar_cuestionario(
     archivo: UploadFile = File(...), 
@@ -79,11 +103,8 @@ async def generar_cuestionario(
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
     # --- 1. REGENERACIÓN DE CRÉDITOS (EVALUACIÓN PEREZOSA) ---
+    regenerar_creditos(usuario, db)
     hoy = datetime.date.today()
-    if usuario.fecha_ultimo_uso < hoy:
-        usuario.creditos_disponibles = 5
-        usuario.fecha_ultimo_uso = hoy
-        db.commit() 
 
     # --- 2. VERIFICACIÓN DE SALDO ---
     if usuario.creditos_disponibles <= 0:
@@ -175,7 +196,11 @@ async def generar_cuestionario(
         usuario.creditos_disponibles -= 1
         usuario.fecha_ultimo_uso = hoy 
         db.commit()
-        return {"status": "success", "mensaje": "Cuestionario generado correctamente"}
+        return {
+            "status": "success",
+            "mensaje": "Cuestionario generado correctamente",
+            "creditos_disponibles": usuario.creditos_disponibles,
+        }
                     
     except Exception as e:
         print(f"❌ Error interno: {e}")
@@ -186,7 +211,15 @@ async def generar_cuestionario(
             os.remove(ruta_temp)
 
 
-# Agrégalo como un nuevo endpoint
+@app.get("/api/usuarios/{usuario_id}/creditos")
+def obtener_creditos(usuario_id: int, db: Session = Depends(get_db)):
+    """Saldo de créditos del día (ya regenerado si cambió la fecha)."""
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    regenerar_creditos(usuario, db)
+    return {"creditos_disponibles": usuario.creditos_disponibles}
+
 @app.put("/api/usuarios/{usuario_id}/perfil")
 def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, db: Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
@@ -205,20 +238,10 @@ def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, db: Session = Depend
     db.commit()
     db.refresh(usuario)
     
-    # Retornamos el usuario actualizado para que React actualice el localStorage
+    # Retornamos el usuario actualizado para que React actualice la sesión
     return {
         "status": "success",
-        "usuario": {
-            "id": usuario.id,
-            "nombre": usuario.nombre,
-            "correo": usuario.correo,
-            "rol": usuario.rol,
-            "creditos_disponibles": usuario.creditos_disponibles,
-            "foto_perfil": usuario.foto_perfil,
-            "biografia": usuario.biografia,
-            "institucion": usuario.institucion,
-            "especialidad": usuario.especialidad
-        }
+        "usuario": usuario_a_dict(usuario)
     }
 
 @app.get("/api/cuestionarios")
@@ -380,14 +403,9 @@ def iniciar_sesion(datos: LoginUsuario, db: Session = Depends(get_db)):
     
     if not bcrypt.checkpw(datos.password.encode('utf-8'), usuario.password_hash.encode('utf-8')):
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
-    
+
+    regenerar_creditos(usuario, db)
     return {
-        "mensaje": "Login exitoso", 
-        "usuario": {
-            "id": usuario.id,
-            "nombre": usuario.nombre,
-            "correo": usuario.correo,
-            "rol": usuario.rol,
-            "creditos_disponibles": usuario.creditos_disponibles
-        }
+        "mensaje": "Login exitoso",
+        "usuario": usuario_a_dict(usuario)
     }
