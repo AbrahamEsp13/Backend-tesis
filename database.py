@@ -11,6 +11,13 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("⚠️ No se encontró DATABASE_URL en el archivo .env")
 
+# SQLAlchemy 2.1+ usa 'psycopg' (v3) por defecto para 'postgresql://'.
+# Forzamos 'psycopg2', que es el driver instalado en requirements.txt.
+for prefijo in ("postgresql://", "postgres://"):
+    if DATABASE_URL.startswith(prefijo):
+        DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len(prefijo):]
+        break
+
 # 2. Configurar el motor de conexión
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
