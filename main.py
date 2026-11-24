@@ -1,14 +1,7 @@
-import os
-import json
 import time
 import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-from pypdf import PdfReader
-import chromadb
-from google import genai
-from google.genai import types
 import bcrypt
 from typing import Literal
 from pydantic import BaseModel
@@ -19,6 +12,10 @@ from database import Cuestionario, Usuario, get_db
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
+
+# --- RAG: recuperación (rag.py) y generación (generacion.py) ---
+from rag import construir_contexto, DocumentoSinTexto
+from generacion import generar_preguntas, RespuestaInvalida
 
 # Modelos para recibir datos desde React
 class RegistroUsuario(BaseModel):
@@ -40,13 +37,6 @@ class PerfilUpdate(BaseModel):
     institucion: str | None = None
     especialidad: str | None = None
     foto_perfil: str | None = None
-
-load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
-chroma_client = chromadb.Client()
-coleccion = chroma_client.get_or_create_collection(name="tesis_api_cuestionarios")
 
 app = FastAPI(title="API Backend Tesis E-Learning", version="1.0")
 
@@ -82,123 +72,90 @@ def usuario_a_dict(usuario: Usuario) -> dict:
         "especialidad": usuario.especialidad,
     }
 
+MAX_TAMANO_PDF = 25 * 1024 * 1024  # 25 MB (el mismo límite que muestra el frontend)
+
+# Es "def" y no "async def": FastAPI lo ejecuta en un hilo aparte, así la lectura del PDF,
+# los embeddings y la llamada a Gemini (que tardan segundos) no bloquean al resto de usuarios.
 @app.post("/api/generar-cuestionario")
-async def generar_cuestionario(
+def generar_cuestionario(
     archivo: UploadFile = File(...),
-    num_preguntas: int = Form(5),
+    num_preguntas: int = Form(5, ge=1, le=15),
     nombre_examen: str = Form(...),
     materia: str = Form(...),
     usuario: Usuario = Depends(docente_actual),
     db: Session = Depends(get_db)
 ):
-
-    # --- 1. REGENERACIÓN DE CRÉDITOS (EVALUACIÓN PEREZOSA) ---
+    # --- 1. CRÉDITOS (regeneración perezosa y saldo) ---
     regenerar_creditos(usuario, db)
-    hoy = datetime.date.today()
-
-    # --- 2. VERIFICACIÓN DE SALDO ---
     if usuario.creditos_disponibles <= 0:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Has agotado tus créditos de IA. Por favor, espera a la medianoche para que tu saldo se regenere automáticamente."
         )
 
-    if not archivo.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
-    
-    ruta_temp = f"temp_{archivo.filename}"
-    with open(ruta_temp, "wb") as buffer:
-        buffer.write(await archivo.read())
-        
-    try:
-        lector = PdfReader(ruta_temp)
-        texto_completo = ""
-        for pagina in lector.pages:
-            texto_completo += pagina.extract_text() + "\n"
-            
-        tamano_fragmento = 1000
-        fragmentos = [texto_completo[i:i+tamano_fragmento] for i in range(0, len(texto_completo), tamano_fragmento)]
-        
-        coleccion.add(
-            documents=fragmentos,
-            ids=[f"frag_{archivo.filename}_{i}" for i in range(len(fragmentos))]
-        )
-        
-        resultados = coleccion.query(query_texts=["Genera preguntas de opción múltiple"], n_results=2)
-        contexto_recuperado = "\n".join(resultados['documents'][0])
-        
-        prompt_final = f"""
-        Eres un profesor experto en pedagogía. Genera una evaluación basada ÚNICAMENTE en el contexto proporcionado. No inventes información.
-        
-        Genera exactamente {num_preguntas} preguntas de opción múltiple. Las preguntas deben estar distribuidas en los diferentes niveles cognitivos de la Taxonomía de Bloom (Recordar, Comprender, Aplicar, Analizar, Evaluar, Crear).
-        
-        El formato de salida DEBE ser un arreglo JSON con la siguiente estructura:
-        [
-          {{
-            "nivel_bloom": "Recordar",
-            "pregunta": "¿...",
-            "opciones": ["a) ...", "b) ...", "c) ...", "d) ..."],
-            "respuesta_correcta": "La opción correcta exacta",
-            "justificacion_pedagogica": "Por qué es correcta basada en el texto"
-          }}
-        ]
-        
-        Contexto del PDF:
-        {contexto_recuperado}
-        """
-        
-        respuesta = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt_final,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2 
-            )
-        )
-        
-        cuestionario_json = json.loads(respuesta.text)
-        
-        max_reintentos = 3
-        for intento in range(max_reintentos):
-            try:
-                print(f"💾 Intentando guardar en Neon (Intento {intento + 1})...")
-                nuevo_registro = Cuestionario(
-                    nombre_examen=nombre_examen,      
-                    nombre_documento=archivo.filename,
-                    materia=materia,
-                    preguntas_json=cuestionario_json, 
-                    usuario_id=usuario.id,
-                    compartido_comunidad=False
-                )
-                db.add(nuevo_registro)
-                db.commit()
-                db.refresh(nuevo_registro)
-                break 
-            except Exception as e:
-                db.rollback() 
-                if intento < max_reintentos - 1:
-                    print(f"⚠️ Neon estaba dormido o cortó la conexión. Reintentando en 2 segundos...")
-                    time.sleep(2) 
-                else:
-                    print(f"❌ Error crítico en base de datos tras 3 intentos: {e}")
-                    raise HTTPException(status_code=500, detail="Error de conexión con la base de datos.")
+    # --- 2. VALIDACIÓN DEL ARCHIVO (en memoria, sin archivos temporales) ---
+    contenido = archivo.file.read(MAX_TAMANO_PDF + 1)
+    if len(contenido) > MAX_TAMANO_PDF:
+        raise HTTPException(status_code=413, detail="El PDF supera el límite de 25 MB.")
+    if not (archivo.filename or "").lower().endswith(".pdf") or not contenido.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un PDF válido.")
 
-        usuario.creditos_disponibles -= 1
-        usuario.fecha_ultimo_uso = hoy 
-        db.commit()
-        return {
-            "status": "success",
-            "mensaje": "Cuestionario generado correctamente",
-            "creditos_disponibles": usuario.creditos_disponibles,
-        }
-                    
+    # --- 3. RECUPERACIÓN (RAG por cobertura) ---
+    try:
+        recuperado = construir_contexto(contenido)
+    except DocumentoSinTexto as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"❌ Error interno: {e}")
-        raise HTTPException(status_code=500, detail="Ocurrió un error al procesar el documento.")
-        
-    finally:
-        if os.path.exists(ruta_temp):
-            os.remove(ruta_temp)
+        print(f"❌ Error al leer el PDF: {e}")
+        raise HTTPException(status_code=400, detail="No se pudo leer el PDF. Verifica que no esté dañado o protegido.")
+    print(f"📚 RAG: {recuperado['fragmentos_usados']} de {recuperado['fragmentos_totales']} fragmentos seleccionados por cobertura")
+
+    # --- 4. GENERACIÓN (Gemini) Y VALIDACIÓN ---
+    try:
+        preguntas = generar_preguntas(recuperado["contexto"], num_preguntas)
+    except RespuestaInvalida as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        print(f"❌ Error al generar con la IA: {e}")
+        raise HTTPException(status_code=502, detail="El servicio de IA no respondió correctamente. Intenta de nuevo en unos minutos.")
+
+    # --- 5. GUARDADO (con reintentos: Neon puede estar "dormido") ---
+    max_reintentos = 3
+    for intento in range(max_reintentos):
+        try:
+            nuevo_registro = Cuestionario(
+                nombre_examen=nombre_examen,
+                nombre_documento=archivo.filename,
+                materia=materia,
+                preguntas_json=preguntas,
+                usuario_id=usuario.id,
+                compartido_comunidad=False
+            )
+            db.add(nuevo_registro)
+            db.commit()
+            db.refresh(nuevo_registro)
+            break
+        except Exception as e:
+            db.rollback()
+            if intento < max_reintentos - 1:
+                print("⚠️ Neon estaba dormido o cortó la conexión. Reintentando en 2 segundos...")
+                time.sleep(2)
+            else:
+                print(f"❌ Error crítico en base de datos tras {max_reintentos} intentos: {e}")
+                raise HTTPException(status_code=500, detail="Error de conexión con la base de datos.")
+
+    # --- 6. COBRO DEL CRÉDITO (solo si todo salió bien) ---
+    usuario.creditos_disponibles -= 1
+    usuario.fecha_ultimo_uso = datetime.date.today()
+    db.commit()
+    return {
+        "status": "success",
+        "mensaje": "Cuestionario generado correctamente",
+        "creditos_disponibles": usuario.creditos_disponibles,
+        "preguntas_generadas": len(preguntas),
+        "fragmentos_totales": recuperado["fragmentos_totales"],
+        "fragmentos_usados": recuperado["fragmentos_usados"],
+    }
 
 
 @app.get("/api/usuarios/{usuario_id}/creditos")
