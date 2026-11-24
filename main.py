@@ -1,10 +1,23 @@
+import os
+import re
+import sys
 import time
 import datetime
+from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 import bcrypt
 from typing import Literal
 from pydantic import BaseModel, Field
+from sqlalchemy import func
+
+load_dotenv()
+
+# Los mensajes del servidor llevan acentos: si la consola no es UTF-8 (p. ej. logs redirigidos
+# a un archivo en Windows), un print no debe tumbar la petición.
+for flujo in (sys.stdout, sys.stderr):
+    if hasattr(flujo, "reconfigure"):
+        flujo.reconfigure(errors="replace")
 
 # --- IMPORTACIONES DE BASE DE DATOS ---
 from sqlalchemy.orm import Session
@@ -41,7 +54,7 @@ class ActualizarCuestionario(BaseModel):
 
 class CambioPassword(BaseModel):
     password_actual: str
-    password_nueva: str = Field(min_length=8, max_length=128)
+    password_nueva: str = Field(min_length=8, max_length=128)  # = MIN_PASSWORD
 
 class ConfirmarPassword(BaseModel):
     password: str
@@ -62,12 +75,21 @@ class PerfilUpdate(BaseModel):
 
 app = FastAPI(title="API Backend Tesis E-Learning", version="1.0")
 
+# Orígenes del frontend que pueden llamar a la API, separados por comas en CORS_ORIGINS
+# (p. ej. "https://quizai.vercel.app,http://localhost:5173"). Sin la variable, solo desarrollo local.
+ORIGENES_PERMITIDOS = [
+    origen.strip().rstrip("/")
+    for origen in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origen.strip()
+]
+
+# La autenticación va en el encabezado Authorization (no en cookies): no hacen falta credenciales.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ORIGENES_PERMITIDOS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(clases.router)
@@ -132,9 +154,9 @@ def generar_cuestionario(
     except DocumentoSinTexto as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"❌ Error al leer el PDF: {e}")
+        print(f"ERROR al leer el PDF: {e}")
         raise HTTPException(status_code=400, detail="No se pudo leer el PDF. Verifica que no esté dañado o protegido.")
-    print(f"📚 RAG: {recuperado['fragmentos_usados']} de {recuperado['fragmentos_totales']} fragmentos seleccionados por cobertura")
+    print(f"INFO RAG: {recuperado['fragmentos_usados']} de {recuperado['fragmentos_totales']} fragmentos seleccionados por cobertura")
 
     # --- 4. GENERACIÓN (Gemini) Y VALIDACIÓN ---
     try:
@@ -142,7 +164,7 @@ def generar_cuestionario(
     except RespuestaInvalida as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        print(f"❌ Error al generar con la IA: {e}")
+        print(f"ERROR al generar con la IA: {e}")
         raise HTTPException(status_code=502, detail="El servicio de IA no respondió correctamente. Intenta de nuevo en unos minutos.")
 
     # --- 5. GUARDADO (con reintentos: Neon puede estar "dormido") ---
@@ -165,10 +187,10 @@ def generar_cuestionario(
         except Exception as e:
             db.rollback()
             if intento < max_reintentos - 1:
-                print("⚠️ Neon estaba dormido o cortó la conexión. Reintentando en 2 segundos...")
+                print("AVISO: Neon estaba dormido o cortó la conexión. Reintentando en 2 segundos...")
                 time.sleep(2)
             else:
-                print(f"❌ Error crítico en base de datos tras {max_reintentos} intentos: {e}")
+                print(f"ERROR crítico en base de datos tras {max_reintentos} intentos: {e}")
                 raise HTTPException(status_code=500, detail="Error de conexión con la base de datos.")
 
     # --- 6. COBRO DEL CRÉDITO (solo si todo salió bien) ---
@@ -214,6 +236,18 @@ def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, usuario: Usuario = D
         "usuario": usuario_a_dict(usuario)
     }
 
+MIN_PASSWORD = 8
+CORREO_VALIDO = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+CREDENCIALES_INVALIDAS = "Correo o contraseña incorrectos."
+HASH_FICTICIO = bcrypt.hashpw(b"contrasena-ficticia", bcrypt.gensalt())
+
+def normalizar_correo(correo: str) -> str:
+    return correo.strip().lower()
+
+def buscar_por_correo(correo_normalizado: str, db: Session) -> Usuario | None:
+    """Sin distinguir mayúsculas (las cuentas antiguas pudieron guardarse con mayúsculas)."""
+    return db.query(Usuario).filter(func.lower(Usuario.correo) == correo_normalizado).first()
+
 def verificar_password(password: str, usuario: Usuario) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), usuario.password_hash.encode('utf-8'))
 
@@ -257,7 +291,7 @@ def eliminar_cuenta(usuario_id: int, datos: ConfirmarPassword, usuario: Usuario 
         db.commit()
     except Exception as e:
         db.rollback()
-        print(f"❌ Error al eliminar la cuenta {usuario_id}: {e}")
+        print(f"ERROR al eliminar la cuenta {usuario_id}: {e}")
         raise HTTPException(status_code=500, detail="No se pudo eliminar la cuenta. Intenta de nuevo.")
     return {"mensaje": "Cuenta eliminada."}
 
@@ -373,7 +407,7 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
         db.refresh(intento)
     except Exception as e:
         db.rollback()
-        print(f"❌ Error al guardar el intento: {e}")
+        print(f"ERROR al guardar el intento: {e}")
         raise HTTPException(status_code=500, detail="No se pudo guardar tu evaluación. Intenta entregarla de nuevo.")
 
     return {
@@ -439,7 +473,7 @@ def obtener_cuestionarios_comunidad(usuario: Usuario = Depends(usuario_actual), 
             
         return {"data": comunidad_data}
     except Exception as e:
-        print(f"❌ Error en Comunidad: {e}")
+        print(f"ERROR en Comunidad: {e}")
         raise HTTPException(status_code=500, detail="Error al cargar la comunidad.")
 
 @app.put("/api/cuestionarios/{cuestionario_id}/compartir")
@@ -486,17 +520,21 @@ def clonar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente
 
 @app.post("/api/auth/register")
 def registrar_usuario(datos: RegistroUsuario, db: Session = Depends(get_db)):
-    usuario_existente = db.query(Usuario).filter(Usuario.correo == datos.correo).first()
-    if usuario_existente:
+    nombre = datos.nombre.strip()
+    correo = normalizar_correo(datos.correo)
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Escribe tu nombre.")
+    if not CORREO_VALIDO.fullmatch(correo):
+        raise HTTPException(status_code=400, detail="Escribe un correo electrónico válido.")
+    if len(datos.password) < MIN_PASSWORD:
+        raise HTTPException(status_code=400, detail=f"La contraseña debe tener al menos {MIN_PASSWORD} caracteres.")
+    if buscar_por_correo(correo, db):
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
-    
-    salt = bcrypt.gensalt()
-    password_encriptada = bcrypt.hashpw(datos.password.encode('utf-8'), salt).decode('utf-8')
-    
+
     nuevo_usuario = Usuario(
-        nombre=datos.nombre,
-        correo=datos.correo,
-        password_hash=password_encriptada,
+        nombre=nombre,
+        correo=correo,
+        password_hash=encriptar_password(datos.password),
         rol=datos.rol
     )
     db.add(nuevo_usuario)
@@ -507,12 +545,14 @@ def registrar_usuario(datos: RegistroUsuario, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login")
 def iniciar_sesion(datos: LoginUsuario, db: Session = Depends(get_db)):
-    usuario = db.query(Usuario).filter(Usuario.correo == datos.correo).first()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Correo no encontrado")
-    
-    if not bcrypt.checkpw(datos.password.encode('utf-8'), usuario.password_hash.encode('utf-8')):
-        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+    usuario = buscar_por_correo(normalizar_correo(datos.correo), db)
+    # Mismo mensaje (y un bcrypt de igual costo) exista o no el correo: así la respuesta
+    # no revela qué correos están registrados.
+    if usuario is None:
+        bcrypt.checkpw(datos.password.encode('utf-8'), HASH_FICTICIO)
+        raise HTTPException(status_code=401, detail=CREDENCIALES_INVALIDAS)
+    if not verificar_password(datos.password, usuario):
+        raise HTTPException(status_code=401, detail=CREDENCIALES_INVALIDAS)
 
     regenerar_creditos(usuario, db)
     return {

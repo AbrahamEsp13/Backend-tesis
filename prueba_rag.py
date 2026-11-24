@@ -10,7 +10,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    raise ValueError("⚠️ Error: No se encontró la GEMINI_API_KEY en el archivo .env")
+    raise ValueError("Error: No se encontró la GEMINI_API_KEY en el archivo .env")
 
 # 2. Inicializar los clientes
 # El nuevo SDK inicializa el cliente de forma diferente
@@ -24,7 +24,7 @@ coleccion = chroma_client.create_collection(name="tesis_documentos_gemini_v2")
 
 def extraer_texto_pdf(ruta_archivo):
     """Extrae todo el texto de un PDF."""
-    print(f"📄 Leyendo el archivo: {ruta_archivo}...")
+    print(f"Leyendo el archivo: {ruta_archivo}...")
     lector = PdfReader(ruta_archivo)
     texto = ""
     for pagina in lector.pages:
@@ -35,12 +35,12 @@ def ejecutar_prueba_rag(ruta_pdf):
     # PASO A: Procesar el documento
     texto_completo = extraer_texto_pdf(ruta_pdf)
 
-    print("✂️ Dividiendo el texto en fragmentos...")
+    print("Dividiendo el texto en fragmentos...")
     tamano_fragmento = 1000
     fragmentos = [texto_completo[i:i+tamano_fragmento] for i in range(0, len(texto_completo), tamano_fragmento)]
 
     # PASO B: Guardar en la base de datos vectorial
-    print("🧠 Generando embeddings locales y guardando en ChromaDB...")
+    print("Generando embeddings locales y guardando en ChromaDB...")
     coleccion.add(
         documents=fragmentos,
         ids=[f"frag_{i}" for i in range(len(fragmentos))]
@@ -48,7 +48,7 @@ def ejecutar_prueba_rag(ruta_pdf):
 
     # PASO C: Recuperación (Retrieval)
     instruccion_docente = "Genera 3 preguntas de opción múltiple."
-    print(f"🔍 Buscando contexto relevante en la base de datos vectorial...")
+    print(f"Buscando contexto relevante en la base de datos vectorial...")
     
     resultados = coleccion.query(
         query_texts=[instruccion_docente],
@@ -58,7 +58,7 @@ def ejecutar_prueba_rag(ruta_pdf):
     contexto_recuperado = "\n".join(resultados['documents'][0])
 
     # PASO D: Generación Aumentada con Gemini (Estructurada)
-    print("🤖 Solicitando el cuestionario estructurado a Gemini 2.5 Flash...")
+    print("Solicitando el cuestionario estructurado a Gemini 2.5 Flash...")
     
     prompt_final = f"""
     Eres un profesor experto en pedagogía. Tu tarea es generar una evaluación basada ÚNICAMENTE en el contexto proporcionado. No inventes información.
@@ -94,7 +94,7 @@ def ejecutar_prueba_rag(ruta_pdf):
     )
 
     print("\n" + "="*60)
-    print("🎯 JSON GENERADO POR IA LISTO PARA TU API:")
+    print("JSON GENERADO POR IA LISTO PARA TU API:")
     print("="*60)
     print(respuesta.text)
 
@@ -105,4 +105,4 @@ if __name__ == "__main__":
     if os.path.exists(NOMBRE_DEL_PDF):
         ejecutar_prueba_rag(NOMBRE_DEL_PDF)
     else:
-        print(f"❌ Error: No se encontró el archivo '{NOMBRE_DEL_PDF}' en esta carpeta.")
+        print(f"Error: No se encontró el archivo '{NOMBRE_DEL_PDF}' en esta carpeta.")

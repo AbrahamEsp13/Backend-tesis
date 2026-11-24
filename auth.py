@@ -20,7 +20,7 @@ load_dotenv()
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET or len(JWT_SECRET) < 32:
     raise ValueError(
-        "⚠️ Falta JWT_SECRET en el archivo .env (mínimo 32 caracteres). "
+        "Falta JWT_SECRET en el archivo .env (mínimo 32 caracteres). "
         "Genera uno con: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
     )
 

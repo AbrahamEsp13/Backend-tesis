@@ -9,7 +9,7 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise ValueError("⚠️ No se encontró DATABASE_URL en el archivo .env")
+    raise ValueError("No se encontró DATABASE_URL en el archivo .env")
 
 # SQLAlchemy 2.1+ usa 'psycopg' (v3) por defecto para 'postgresql://'.
 # Forzamos 'psycopg2', que es el driver instalado en requirements.txt.
@@ -49,7 +49,6 @@ class Cuestionario(Base):
 class Usuario(Base):
     __tablename__ = "usuarios"
 
-    creditos_disponibles = Column(Integer, default=5)
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, index=True)
     correo = Column(String, unique=True, index=True) 
