@@ -21,7 +21,9 @@ from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuar
 
 # --- RAG: recuperación (rag.py) y generación (generacion.py) ---
 from rag import construir_contexto, DocumentoSinTexto
-from generacion import generar_preguntas, RespuestaInvalida
+from generacion import generar_preguntas, RespuestaInvalida, COMPLEJIDAD_PREDETERMINADA
+
+Complejidad = Literal["basico", "equilibrado", "avanzado"]
 
 # Modelos para recibir datos desde React
 class RegistroUsuario(BaseModel):
@@ -47,6 +49,9 @@ class ConfirmarPassword(BaseModel):
 class EntregaIntento(BaseModel):
     respuestas: dict[str, str]   # { "<índice de pregunta>": "<opción elegida>" }
     tiempo_segundos: int | None = Field(default=None, ge=0)
+
+class Preferencias(BaseModel):
+    complejidad_preferida: Complejidad
 
 class PerfilUpdate(BaseModel):
     nombre: str
@@ -89,6 +94,7 @@ def usuario_a_dict(usuario: Usuario) -> dict:
         "biografia": usuario.biografia,
         "institucion": usuario.institucion,
         "especialidad": usuario.especialidad,
+        "complejidad_preferida": usuario.complejidad_preferida or COMPLEJIDAD_PREDETERMINADA,
     }
 
 MAX_TAMANO_PDF = 25 * 1024 * 1024  # 25 MB (el mismo límite que muestra el frontend)
@@ -101,6 +107,7 @@ def generar_cuestionario(
     num_preguntas: int = Form(5, ge=1, le=15),
     nombre_examen: str = Form(...),
     materia: str = Form(...),
+    complejidad: Complejidad = Form(COMPLEJIDAD_PREDETERMINADA),
     usuario: Usuario = Depends(docente_actual),
     db: Session = Depends(get_db)
 ):
@@ -131,7 +138,7 @@ def generar_cuestionario(
 
     # --- 4. GENERACIÓN (Gemini) Y VALIDACIÓN ---
     try:
-        preguntas = generar_preguntas(recuperado["contexto"], num_preguntas)
+        preguntas = generar_preguntas(recuperado["contexto"], num_preguntas, complejidad)
     except RespuestaInvalida as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
@@ -148,7 +155,8 @@ def generar_cuestionario(
                 materia=materia,
                 preguntas_json=preguntas,
                 usuario_id=usuario.id,
-                compartido_comunidad=False
+                compartido_comunidad=False,
+                complejidad=complejidad,
             )
             db.add(nuevo_registro)
             db.commit()
@@ -252,6 +260,14 @@ def eliminar_cuenta(usuario_id: int, datos: ConfirmarPassword, usuario: Usuario 
         print(f"❌ Error al eliminar la cuenta {usuario_id}: {e}")
         raise HTTPException(status_code=500, detail="No se pudo eliminar la cuenta. Intenta de nuevo.")
     return {"mensaje": "Cuenta eliminada."}
+
+@app.put("/api/usuarios/{usuario_id}/preferencias")
+def guardar_preferencias(usuario_id: int, datos: Preferencias, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    """Docente: complejidad predeterminada del generador IA."""
+    exigir_mismo_usuario(usuario_id, usuario)
+    usuario.complejidad_preferida = datos.complejidad_preferida
+    db.commit()
+    return {"complejidad_preferida": usuario.complejidad_preferida}
 
 @app.get("/api/cuestionarios")
 def obtener_historial(usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
@@ -449,6 +465,7 @@ def clonar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente
             nombre_examen=f"{cuestionario_original.nombre_examen} (Copia)",
             nombre_documento=cuestionario_original.nombre_documento,
             materia=cuestionario_original.materia,
+            complejidad=cuestionario_original.complejidad,
             preguntas_json=cuestionario_original.preguntas_json,
             usuario_id=usuario.id,       # <--- Se asigna al docente que lo clonó (del token)
             publicado=False,             # Nace como borrador privado

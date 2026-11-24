@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Date, Float, UniqueConstraint
+from sqlalchemy import create_engine, inspect, text, Column, Integer, String, JSON, DateTime, Boolean, Date, Float, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker
 import datetime
 
@@ -44,6 +44,7 @@ class Cuestionario(Base):
     publicado = Column(Boolean, default=False) 
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
     usuario_id = Column(Integer, index=True)
+    complejidad = Column(String, nullable=True)  # 'basico' | 'equilibrado' | 'avanzado' (con la que se generó)
 
 class Usuario(Base):
     __tablename__ = "usuarios"
@@ -62,6 +63,7 @@ class Usuario(Base):
     biografia = Column(String, nullable=True)
     institucion = Column(String, nullable=True)
     especialidad = Column(String, nullable=True)
+    complejidad_preferida = Column(String, nullable=True)  # preferencia del generador IA (docentes)
 
 class Intento(Base):
     """Una entrega de un estudiante. Cada reintento es un registro nuevo."""
@@ -110,3 +112,23 @@ class ClaseCuestionario(Base):
 
 # Crear las tablas en Neon (si no existen)
 Base.metadata.create_all(bind=engine)
+
+# create_all no agrega columnas nuevas a tablas que ya existen: se agregan aquí.
+# (Solo columnas opcionales; cada una se agrega una vez y después se omite.)
+COLUMNAS_NUEVAS = {
+    Usuario.__tablename__: {"complejidad_preferida": "VARCHAR"},
+    Cuestionario.__tablename__: {"complejidad": "VARCHAR"},
+}
+
+def agregar_columnas_faltantes():
+    inspector = inspect(engine)
+    with engine.begin() as conexion:
+        for tabla, columnas in COLUMNAS_NUEVAS.items():
+            existentes = {c["name"] for c in inspector.get_columns(tabla)}
+            for nombre, tipo in columnas.items():
+                if nombre not in existentes:
+                    conexion.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {nombre} {tipo}"))
+                    # Sin emojis: en la consola de Windows (cp1252) el print fallaría y abortaría el arranque
+                    print(f"[migracion] Columna agregada: {tabla}.{nombre}")
+
+agregar_columnas_faltantes()
