@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Date
+from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Date, Float, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker
 import datetime
 
@@ -62,6 +62,51 @@ class Usuario(Base):
     biografia = Column(String, nullable=True)
     institucion = Column(String, nullable=True)
     especialidad = Column(String, nullable=True)
+
+class Intento(Base):
+    """Una entrega de un estudiante. Cada reintento es un registro nuevo."""
+    __tablename__ = "intentos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cuestionario_id = Column(Integer, index=True, nullable=False)
+    estudiante_id = Column(Integer, index=True, nullable=False)
+    respuestas = Column(JSON, nullable=False)          # { "<índice>": "<opción elegida>" }
+    puntos_obtenidos = Column(Float, nullable=False)
+    puntos_totales = Column(Float, nullable=False)
+    calificacion = Column(Float, nullable=False)       # sobre 10
+    tiempo_segundos = Column(Integer, nullable=True)
+    fecha = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Clase(Base):
+    """Grupo de un docente. Los estudiantes se unen con el código de acceso."""
+    __tablename__ = "clases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, nullable=False)
+    descripcion = Column(String, nullable=True)
+    codigo = Column(String, unique=True, index=True, nullable=False)
+    docente_id = Column(Integer, index=True, nullable=False)
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
+class ClaseEstudiante(Base):
+    """Membresía: el estudiante pertenece a la clase."""
+    __tablename__ = "clase_estudiantes"
+    __table_args__ = (UniqueConstraint("clase_id", "estudiante_id"),)
+
+    id = Column(Integer, primary_key=True)
+    clase_id = Column(Integer, index=True, nullable=False)
+    estudiante_id = Column(Integer, index=True, nullable=False)
+    fecha_union = Column(DateTime, default=datetime.datetime.utcnow)
+
+class ClaseCuestionario(Base):
+    """Asignación: el cuestionario está disponible para la clase (si además está publicado)."""
+    __tablename__ = "clase_cuestionarios"
+    __table_args__ = (UniqueConstraint("clase_id", "cuestionario_id"),)
+
+    id = Column(Integer, primary_key=True)
+    clase_id = Column(Integer, index=True, nullable=False)
+    cuestionario_id = Column(Integer, index=True, nullable=False)
+    fecha_asignacion = Column(DateTime, default=datetime.datetime.utcnow)
 
 # Crear las tablas en Neon (si no existen)
 Base.metadata.create_all(bind=engine)

@@ -4,11 +4,17 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 import bcrypt
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # --- IMPORTACIONES DE BASE DE DATOS ---
 from sqlalchemy.orm import Session
-from database import Cuestionario, Usuario, get_db
+from database import Cuestionario, Usuario, Intento, get_db
+
+# --- CALIFICACIÓN EN EL SERVIDOR ---
+from calificacion import calificar, ocultar_respuestas
+
+# --- CLASES (grupos) ---
+import clases
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
@@ -31,6 +37,17 @@ class LoginUsuario(BaseModel):
 class ActualizarCuestionario(BaseModel):
     preguntas_json: list
 
+class CambioPassword(BaseModel):
+    password_actual: str
+    password_nueva: str = Field(min_length=8, max_length=128)
+
+class ConfirmarPassword(BaseModel):
+    password: str
+
+class EntregaIntento(BaseModel):
+    respuestas: dict[str, str]   # { "<índice de pregunta>": "<opción elegida>" }
+    tiempo_segundos: int | None = Field(default=None, ge=0)
+
 class PerfilUpdate(BaseModel):
     nombre: str
     biografia: str | None = None
@@ -47,6 +64,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(clases.router)
 
 CREDITOS_DIARIOS = 5
 
@@ -187,12 +206,63 @@ def actualizar_perfil(usuario_id: int, datos: PerfilUpdate, usuario: Usuario = D
         "usuario": usuario_a_dict(usuario)
     }
 
+def verificar_password(password: str, usuario: Usuario) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), usuario.password_hash.encode('utf-8'))
+
+def encriptar_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+@app.put("/api/usuarios/{usuario_id}/password")
+def cambiar_password(usuario_id: int, datos: CambioPassword, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    exigir_mismo_usuario(usuario_id, usuario)
+    if not verificar_password(datos.password_actual, usuario):
+        raise HTTPException(status_code=400, detail="La contraseña actual no es correcta.")
+    if datos.password_nueva == datos.password_actual:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta de la actual.")
+    usuario.password_hash = encriptar_password(datos.password_nueva)
+    db.commit()
+    return {"mensaje": "Contraseña actualizada correctamente."}
+
+@app.delete("/api/usuarios/{usuario_id}")
+def eliminar_cuenta(usuario_id: int, datos: ConfirmarPassword, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    """
+    Borra la cuenta y sus datos, previa confirmación con la contraseña.
+    Docente: sus cuestionarios (con sus intentos y asignaciones) y sus clases.
+    Estudiante: sus intentos y sus membresías en clases.
+    Las copias que otros docentes clonaron de la comunidad son de ellos y se conservan.
+    """
+    exigir_mismo_usuario(usuario_id, usuario)
+    if not verificar_password(datos.password, usuario):
+        raise HTTPException(status_code=400, detail="La contraseña no es correcta.")
+    try:
+        if usuario.rol == "docente":
+            ids = [fila.id for fila in db.query(Cuestionario.id).filter(Cuestionario.usuario_id == usuario.id)]
+            if ids:
+                db.query(Intento).filter(Intento.cuestionario_id.in_(ids)).delete(synchronize_session=False)
+                clases.borrar_asignaciones_de_cuestionarios(ids, db)
+                db.query(Cuestionario).filter(Cuestionario.id.in_(ids)).delete(synchronize_session=False)
+            clases.borrar_clases_de_docente(usuario.id, db)
+        else:
+            db.query(Intento).filter(Intento.estudiante_id == usuario.id).delete(synchronize_session=False)
+            clases.borrar_membresias_de_estudiante(usuario.id, db)
+        db.delete(usuario)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error al eliminar la cuenta {usuario_id}: {e}")
+        raise HTTPException(status_code=500, detail="No se pudo eliminar la cuenta. Intenta de nuevo.")
+    return {"mensaje": "Cuenta eliminada."}
+
 @app.get("/api/cuestionarios")
 def obtener_historial(usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
-    """Docente: sus cuestionarios. Estudiante: los publicados. (El rol sale del token.)"""
+    """Docente: sus cuestionarios. Estudiante: los publicados en sus clases. (El rol sale del token.)"""
     try:
         if usuario.rol == 'estudiante':
-            historial = db.query(Cuestionario).filter(Cuestionario.publicado == True).order_by(Cuestionario.id.desc()).all()
+            # El estudiante no recibe la clave ni la justificación: la corrección llega al entregar
+            historial = [
+                {**cuestionario_para_estudiante(c), "clases": nombres_clases}
+                for c, nombres_clases in clases.cuestionarios_visibles(usuario.id, db)
+            ]
         else:
             historial = db.query(Cuestionario).filter(Cuestionario.usuario_id == usuario.id).order_by(Cuestionario.id.desc()).all()
         return {"data": historial}
@@ -216,6 +286,8 @@ def despublicar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(do
 @app.delete("/api/cuestionarios/{cuestionario_id}")
 def eliminar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
     cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
+    db.query(Intento).filter(Intento.cuestionario_id == cuestionario.id).delete()
+    clases.borrar_asignaciones_de_cuestionarios([cuestionario.id], db)
     db.delete(cuestionario)
     db.commit()
     return {"mensaje": "Cuestionario eliminado exitosamente"}
@@ -226,6 +298,98 @@ def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, usuario: Usu
     cuestionario.preguntas_json = datos.preguntas_json
     db.commit()
     return {"mensaje": "Cuestionario actualizado correctamente"}
+
+
+# ==========================================================
+# INTENTOS DE LOS ESTUDIANTES (calificados en el servidor)
+# ==========================================================
+
+def cuestionario_para_estudiante(cuestionario: Cuestionario) -> dict:
+    return {
+        "id": cuestionario.id,
+        "nombre_examen": cuestionario.nombre_examen,
+        "nombre_documento": cuestionario.nombre_documento,
+        "materia": cuestionario.materia,
+        "publicado": cuestionario.publicado,
+        "fecha_creacion": cuestionario.fecha_creacion,
+        "preguntas_json": ocultar_respuestas(cuestionario.preguntas_json or []),
+    }
+
+def intento_a_dict(intento: Intento) -> dict:
+    return {
+        "id": intento.id,
+        "cuestionario_id": intento.cuestionario_id,
+        "estudiante_id": intento.estudiante_id,
+        "respuestas": intento.respuestas,
+        "puntos_obtenidos": intento.puntos_obtenidos,
+        "puntos_totales": intento.puntos_totales,
+        "calificacion": intento.calificacion,
+        "tiempo_segundos": intento.tiempo_segundos,
+        "fecha": intento.fecha,
+    }
+
+@app.post("/api/cuestionarios/{cuestionario_id}/intentos")
+def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    """El estudiante entrega sus respuestas; el servidor califica, guarda el intento y devuelve la corrección."""
+    if usuario.rol != "estudiante":
+        raise HTTPException(status_code=403, detail="Solo los estudiantes pueden entregar evaluaciones.")
+    cuestionario = db.query(Cuestionario).filter(Cuestionario.id == cuestionario_id).first()
+    if cuestionario is None or not cuestionario.publicado or not clases.estudiante_puede_ver(usuario.id, cuestionario.id, db):
+        raise HTTPException(status_code=404, detail="Esta evaluación ya no está disponible.")
+
+    preguntas = cuestionario.preguntas_json or []
+    # Solo se guardan respuestas a preguntas que existen
+    respuestas = {k: v for k, v in datos.respuestas.items() if k.isdigit() and int(k) < len(preguntas)}
+    resultado = calificar(preguntas, respuestas)
+
+    intento = Intento(
+        cuestionario_id=cuestionario.id,
+        estudiante_id=usuario.id,
+        respuestas=respuestas,
+        puntos_obtenidos=resultado["puntos_obtenidos"],
+        puntos_totales=resultado["puntos_totales"],
+        calificacion=resultado["calificacion"],
+        tiempo_segundos=datos.tiempo_segundos,
+    )
+    try:
+        db.add(intento)
+        db.commit()
+        db.refresh(intento)
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error al guardar el intento: {e}")
+        raise HTTPException(status_code=500, detail="No se pudo guardar tu evaluación. Intenta entregarla de nuevo.")
+
+    return {
+        "intento": intento_a_dict(intento),
+        "respuestas_correctas": resultado["respuestas_correctas"],
+    }
+
+@app.get("/api/cuestionarios/{cuestionario_id}/intentos")
+def listar_intentos(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    """
+    Docente: todos los intentos de uno de sus cuestionarios, con el nombre del estudiante.
+    `clases` son las clases a las que está asignado; cada intento trae `clase_ids`, las de esas
+    clases en las que el estudiante está inscrito hoy (para filtrar por clase).
+    """
+    cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
+    filas = db.query(Intento, Usuario.nombre, Usuario.correo) \
+        .join(Usuario, Intento.estudiante_id == Usuario.id) \
+        .filter(Intento.cuestionario_id == cuestionario.id) \
+        .order_by(Intento.fecha.desc()).all()
+    clases_asignadas, clases_por_estudiante = clases.clases_de_cuestionario(cuestionario.id, db)
+    return {
+        "data": [
+            {
+                **intento_a_dict(intento),
+                "nombre_estudiante": nombre,
+                "correo_estudiante": correo,
+                "clase_ids": clases_por_estudiante.get(intento.estudiante_id, []),
+            }
+            for intento, nombre, correo in filas
+        ],
+        "clases": clases_asignadas,
+    }
 
 
 # ==========================================================
