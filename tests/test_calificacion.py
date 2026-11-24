@@ -34,3 +34,7 @@ def test_ocultar_respuestas_quita_clave_y_justificacion():
     assert all("respuesta_correcta" not in p and "justificacion_pedagogica" not in p for p in ocultas)
     assert ocultas[0]["opciones"] == ["x", "y"]
     assert "respuesta_correcta" in PREGUNTAS[0], "no debe modificar las preguntas originales"
+
+
+def test_devuelve_justificaciones_en_orden():
+    assert calificar(PREGUNTAS, {})["justificaciones"] == ["j", ""]

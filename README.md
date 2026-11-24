@@ -83,6 +83,6 @@ La referencia completa e interactiva está en `/docs` con el servidor en marcha.
 | Cuenta | `PUT /api/usuarios/{id}/perfil`, `PUT .../password`, `PUT .../preferencias`, `GET .../creditos`, `DELETE /api/usuarios/{id}` |
 | Generación | `POST /api/generar-cuestionario` (PDF, número de preguntas, complejidad) |
 | Cuestionarios | `GET /api/cuestionarios`, `PUT/DELETE /api/cuestionarios/{id}`, `PUT .../publicar`, `.../despublicar`, `.../compartir`, `POST .../clonar` |
-| Intentos | `POST /api/cuestionarios/{id}/intentos` (estudiante), `GET /api/cuestionarios/{id}/intentos` (docente) |
+| Intentos | `POST /api/cuestionarios/{id}/intentos` (estudiante; devuelve clave y retroalimentación), `GET /api/cuestionarios/{id}/intentos` (docente), `GET /api/intentos/mios` (estudiante), `GET /api/intentos/{id}` (revisión: el estudiante autor o el docente dueño) |
 | Clases | `GET/POST /api/clases`, `GET/PUT/DELETE /api/clases/{id}`, `PUT .../codigo`, `POST/DELETE .../cuestionarios/{cid}`, `DELETE .../estudiantes/{eid}`, `POST /api/clases/unirse`, `DELETE .../salir` |
 | Comunidad | `GET /api/comunidad/cuestionarios` |

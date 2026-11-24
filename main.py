@@ -413,6 +413,44 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
     return {
         "intento": intento_a_dict(intento),
         "respuestas_correctas": resultado["respuestas_correctas"],
+        "justificaciones": resultado["justificaciones"],
+    }
+
+# Va antes de /api/intentos/{intento_id} para que "mios" no se interprete como un id.
+@app.get("/api/intentos/mios")
+def mis_intentos(usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    """Estudiante: sus intentos (más reciente primero), con el nombre y la materia del examen."""
+    if usuario.rol != "estudiante":
+        raise HTTPException(status_code=403, detail="Esta sección es solo para estudiantes.")
+    filas = db.query(Intento, Cuestionario.nombre_examen, Cuestionario.nombre_documento, Cuestionario.materia) \
+        .join(Cuestionario, Cuestionario.id == Intento.cuestionario_id) \
+        .filter(Intento.estudiante_id == usuario.id) \
+        .order_by(Intento.fecha.desc()).all()
+    return {"data": [
+        {**intento_a_dict(intento), "nombre_examen": nombre or documento, "materia": materia}
+        for intento, nombre, documento, materia in filas
+    ]}
+
+@app.get("/api/intentos/{intento_id}")
+def revisar_intento(intento_id: int, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    """
+    Revisión de un intento ya entregado: respuestas elegidas, clave y retroalimentación.
+    Lo pueden ver el estudiante que lo hizo y el docente dueño del examen.
+    """
+    intento = db.query(Intento).filter(Intento.id == intento_id).first()
+    cuestionario = intento and db.query(Cuestionario).filter(Cuestionario.id == intento.cuestionario_id).first()
+    if intento is None or cuestionario is None:
+        raise HTTPException(status_code=404, detail="Intento no encontrado.")
+    if usuario.id not in (intento.estudiante_id, cuestionario.usuario_id):
+        raise HTTPException(status_code=403, detail="No puedes ver este intento.")
+    return {
+        "intento": intento_a_dict(intento),
+        "examen": {
+            "id": cuestionario.id,
+            "nombre_examen": cuestionario.nombre_examen or cuestionario.nombre_documento,
+            "materia": cuestionario.materia,
+            "preguntas_json": cuestionario.preguntas_json or [],
+        },
     }
 
 @app.get("/api/cuestionarios/{cuestionario_id}/intentos")

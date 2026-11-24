@@ -86,3 +86,46 @@ def test_eliminar_examen_borra_sus_intentos(cliente, db, clase_con_examen):
     assert cliente.delete(f"/api/cuestionarios/{d['examen_id']}", headers=d["docente"]).status_code == 200
     assert db.query(Intento).count() == 0
     assert db.query(ClaseCuestionario).count() == 0
+
+
+# ---------- Retroalimentación y "Mis resultados" ----------
+
+def test_entrega_devuelve_la_retroalimentacion(cliente, clase_con_examen):
+    d = clase_con_examen
+    datos = entregar(cliente, d["estudiante"], d["examen_id"], {"0": "a"}).json()
+    assert datos["justificaciones"] == ["j1", "j2"]
+
+
+def test_mis_intentos(cliente, clase_con_examen):
+    d = clase_con_examen
+    entregar(cliente, d["estudiante"], d["examen_id"], {"0": "b"})
+    entregar(cliente, d["estudiante"], d["examen_id"], {"0": "a", "1": "b"})
+    mios = cliente.get("/api/intentos/mios", headers=d["estudiante"]).json()["data"]
+    assert [i["calificacion"] for i in mios] == [10, 0], "el más reciente primero"
+    assert mios[0]["nombre_examen"] == "Examen" and mios[0]["materia"] == "Programación"
+
+
+def test_mis_intentos_solo_los_propios(cliente, registrar, clase_con_examen):
+    d = clase_con_examen
+    entregar(cliente, d["estudiante"], d["examen_id"], {"0": "a"})
+    beto, _ = registrar("beto")
+    assert cliente.get("/api/intentos/mios", headers=beto).json()["data"] == []
+    assert cliente.get("/api/intentos/mios", headers=d["docente"]).status_code == 403
+
+
+def test_revisar_intento(cliente, registrar, clase_con_examen):
+    d = clase_con_examen
+    intento_id = entregar(cliente, d["estudiante"], d["examen_id"], {"0": "a"}).json()["intento"]["id"]
+    revision = cliente.get(f"/api/intentos/{intento_id}", headers=d["estudiante"])
+    assert revision.status_code == 200
+    datos = revision.json()
+    assert datos["intento"]["respuestas"] == {"0": "a"}
+    assert datos["examen"]["preguntas_json"][1]["respuesta_correcta"] == "b"
+    assert datos["examen"]["preguntas_json"][1]["justificacion_pedagogica"] == "j2"
+
+    assert cliente.get(f"/api/intentos/{intento_id}", headers=d["docente"]).status_code == 200, "el docente dueño también"
+    beto, _ = registrar("beto")
+    otro, _ = registrar("otro", "docente")
+    assert cliente.get(f"/api/intentos/{intento_id}", headers=beto).status_code == 403
+    assert cliente.get(f"/api/intentos/{intento_id}", headers=otro).status_code == 403
+    assert cliente.get("/api/intentos/99999", headers=d["estudiante"]).status_code == 404

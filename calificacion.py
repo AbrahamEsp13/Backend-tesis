@@ -33,11 +33,13 @@ def calificar(preguntas: list, respuestas: dict) -> dict:
     obtenido = 0.0
     total = 0.0
     respuestas_correctas = []
+    justificaciones = []
     for indice, pregunta in enumerate(preguntas):
         puntos = puntos_de_pregunta(pregunta)
         total += puntos
         correcta = pregunta.get("respuesta_correcta")
         respuestas_correctas.append(correcta)
+        justificaciones.append(pregunta.get("justificacion_pedagogica") or "")
         if respuestas.get(str(indice)) == correcta:
             obtenido += puntos
 
@@ -47,4 +49,5 @@ def calificar(preguntas: list, respuestas: dict) -> dict:
         "puntos_totales": total,
         "calificacion": calificacion,
         "respuestas_correctas": respuestas_correctas,
+        "justificaciones": justificaciones,  # retroalimentación que ve el estudiante tras entregar
     }
