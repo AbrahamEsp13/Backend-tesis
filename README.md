@@ -24,6 +24,18 @@ uvicorn main:app --reload      # http://localhost:8000  (documentación: /docs)
 Al arrancar se crean las tablas que falten y se agregan las columnas nuevas a las
 tablas existentes (ver `agregar_columnas_faltantes` en `database.py`).
 
+## Pruebas
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+Las pruebas (`tests/`) usan una base SQLite temporal y simulan el RAG y Gemini, así que
+no necesitan `.env`, conexión a Neon ni API key, y nunca modifican datos reales.
+Cubren autenticación, CORS, cuenta, clases, intentos y calificación, generación
+(complejidad, créditos, validación de la salida del modelo) y la migración de columnas.
+
 ## Variables de entorno (`.env`)
 
 | Variable | Obligatoria | Descripción |

@@ -23,6 +23,10 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+def ahora_utc() -> datetime.datetime:
+    """Fecha y hora UTC sin zona (como guardaba datetime.utcnow, que está obsoleto)."""
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
 def get_db():
     """Dependencia de FastAPI: una sesión de BD por petición."""
     db = SessionLocal()
@@ -42,7 +46,7 @@ class Cuestionario(Base):
     compartido_comunidad = Column(Boolean, default=False)  
     preguntas_json = Column(JSON, nullable=False) 
     publicado = Column(Boolean, default=False) 
-    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=ahora_utc)
     usuario_id = Column(Integer, index=True)
     complejidad = Column(String, nullable=True)  # 'basico' | 'equilibrado' | 'avanzado' (con la que se generó)
 
@@ -54,7 +58,7 @@ class Usuario(Base):
     correo = Column(String, unique=True, index=True) 
     password_hash = Column(String) 
     rol = Column(String) # 'docente' o 'estudiante'
-    fecha_registro = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_registro = Column(DateTime, default=ahora_utc)
     creditos_disponibles = Column(Integer, default=5)
     fecha_ultimo_uso = Column(Date, default=datetime.date.today)
 
@@ -76,7 +80,7 @@ class Intento(Base):
     puntos_totales = Column(Float, nullable=False)
     calificacion = Column(Float, nullable=False)       # sobre 10
     tiempo_segundos = Column(Integer, nullable=True)
-    fecha = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha = Column(DateTime, default=ahora_utc)
 
 class Clase(Base):
     """Grupo de un docente. Los estudiantes se unen con el código de acceso."""
@@ -87,7 +91,7 @@ class Clase(Base):
     descripcion = Column(String, nullable=True)
     codigo = Column(String, unique=True, index=True, nullable=False)
     docente_id = Column(Integer, index=True, nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=ahora_utc)
 
 class ClaseEstudiante(Base):
     """Membresía: el estudiante pertenece a la clase."""
@@ -97,7 +101,7 @@ class ClaseEstudiante(Base):
     id = Column(Integer, primary_key=True)
     clase_id = Column(Integer, index=True, nullable=False)
     estudiante_id = Column(Integer, index=True, nullable=False)
-    fecha_union = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_union = Column(DateTime, default=ahora_utc)
 
 class ClaseCuestionario(Base):
     """Asignación: el cuestionario está disponible para la clase (si además está publicado)."""
@@ -107,7 +111,7 @@ class ClaseCuestionario(Base):
     id = Column(Integer, primary_key=True)
     clase_id = Column(Integer, index=True, nullable=False)
     cuestionario_id = Column(Integer, index=True, nullable=False)
-    fecha_asignacion = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_asignacion = Column(DateTime, default=ahora_utc)
 
 # Crear las tablas en Neon (si no existen)
 Base.metadata.create_all(bind=engine)
@@ -119,9 +123,10 @@ COLUMNAS_NUEVAS = {
     Cuestionario.__tablename__: {"complejidad": "VARCHAR"},
 }
 
-def agregar_columnas_faltantes():
-    inspector = inspect(engine)
-    with engine.begin() as conexion:
+def agregar_columnas_faltantes(motor=engine):
+    """`motor` se puede cambiar en las pruebas para migrar otra base."""
+    inspector = inspect(motor)
+    with motor.begin() as conexion:
         for tabla, columnas in COLUMNAS_NUEVAS.items():
             existentes = {c["name"] for c in inspector.get_columns(tabla)}
             for nombre, tipo in columnas.items():
