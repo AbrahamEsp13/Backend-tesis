@@ -5,7 +5,7 @@ califica con las preguntas guardadas y solo entonces devuelve la corrección.
 """
 
 # Campos que el estudiante no debe ver mientras resuelve el examen
-CAMPOS_PRIVADOS = ("respuesta_correcta", "justificacion_pedagogica")
+CAMPOS_PRIVADOS = ("respuesta_correcta", "justificacion_pedagogica", "fuente")
 
 
 def puntos_de_pregunta(pregunta: dict) -> float:
@@ -34,12 +34,14 @@ def calificar(preguntas: list, respuestas: dict) -> dict:
     total = 0.0
     respuestas_correctas = []
     justificaciones = []
+    fuentes = []
     for indice, pregunta in enumerate(preguntas):
         puntos = puntos_de_pregunta(pregunta)
         total += puntos
         correcta = pregunta.get("respuesta_correcta")
         respuestas_correctas.append(correcta)
         justificaciones.append(pregunta.get("justificacion_pedagogica") or "")
+        fuentes.append(pregunta.get("fuente"))
         if respuestas.get(str(indice)) == correcta:
             obtenido += puntos
 
@@ -50,4 +52,5 @@ def calificar(preguntas: list, respuestas: dict) -> dict:
         "calificacion": calificacion,
         "respuestas_correctas": respuestas_correctas,
         "justificaciones": justificaciones,  # retroalimentación que ve el estudiante tras entregar
+        "fuentes": fuentes,  # {texto, pagina, pagina_fin} o None: de qué parte del PDF salió cada pregunta
     }

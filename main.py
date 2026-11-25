@@ -34,7 +34,7 @@ from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuar
 
 # --- RAG: recuperación (rag.py) y generación (generacion.py) ---
 from rag import construir_contexto, DocumentoSinTexto
-from generacion import generar_preguntas, RespuestaInvalida, COMPLEJIDAD_PREDETERMINADA
+from generacion import generar_preguntas, agregar_fuentes, RespuestaInvalida, COMPLEJIDAD_PREDETERMINADA
 
 Complejidad = Literal["basico", "equilibrado", "avanzado"]
 
@@ -165,6 +165,8 @@ def generar_cuestionario(
     # --- 4. GENERACIÓN (Gemini) Y VALIDACIÓN ---
     try:
         preguntas = generar_preguntas(recuperado["contexto"], num_preguntas, complejidad)
+        preguntas = agregar_fuentes(preguntas, recuperado.get("fragmentos", []))
+        print(f"INFO fuentes: {sum('fuente' in p for p in preguntas)} de {len(preguntas)} preguntas con cita al documento")
     except RespuestaInvalida as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
@@ -427,6 +429,7 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
         "intento": intento_a_dict(intento),
         "respuestas_correctas": resultado["respuestas_correctas"],
         "justificaciones": resultado["justificaciones"],
+        "fuentes": resultado["fuentes"],
     }
 
 # Va antes de /api/intentos/{intento_id} para que "mios" no se interprete como un id.

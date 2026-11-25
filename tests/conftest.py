@@ -105,13 +105,19 @@ def clase_con_examen(cliente, registrar, crear_cuestionario):
 def ia_simulada(monkeypatch):
     """Reemplaza el RAG y Gemini; registra la complejidad con la que se llamó la generación."""
     llamadas = []
+    fragmentos = [
+        {"numero": 1, "texto": "Introducción al curso.", "pagina": 1, "pagina_fin": 1},
+        {"numero": 2, "texto": "Una clase define los atributos y métodos de sus objetos.", "pagina": 4, "pagina_fin": 5},
+    ]
     monkeypatch.setattr(main, "construir_contexto", lambda contenido: {
-        "contexto": "texto del pdf", "fragmentos_totales": 3, "fragmentos_usados": 2,
+        "contexto": "texto del pdf", "fragmentos": fragmentos, "fragmentos_totales": 3, "fragmentos_usados": 2,
     })
 
     def generar(contexto, num_preguntas, complejidad):
         llamadas.append({"num_preguntas": num_preguntas, "complejidad": complejidad})
+        # Como validar_preguntas: con los campos crudos fragmento y cita
         return [{"pregunta": "p", "opciones": ["a) x", "b) y"], "respuesta_correcta": "a) x",
-                 "justificacion_pedagogica": "j", "puntuacion": 1}]
+                 "justificacion_pedagogica": "j", "puntuacion": 1,
+                 "fragmento": 2, "cita": "define los atributos y métodos"}]
     monkeypatch.setattr(main, "generar_preguntas", generar)
     return llamadas

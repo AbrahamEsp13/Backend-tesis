@@ -4,6 +4,9 @@
 - Valida cada pregunta: respuesta_correcta debe ser EXACTAMENTE una de las opciones
   (la calificación compara textos). Si el modelo respondió con una letra ("b", "b)")
   o con el texto sin la letra, se corrige; si no se puede, la pregunta se descarta.
+- Cada pregunta indica de qué fragmento del contexto salió y una cita textual. `agregar_fuentes`
+  comprueba que la cita exista en el documento y guarda `fuente: {texto, pagina, pagina_fin}`,
+  que el estudiante ve después de entregar ("Revisa esto en tu material").
 """
 import json
 import os
@@ -47,6 +50,8 @@ class PreguntaIA(BaseModel):
     opciones: list[str]
     respuesta_correcta: str
     justificacion_pedagogica: str
+    fragmento: int
+    cita: str
 
 
 class RespuestaInvalida(ValueError):
@@ -65,6 +70,8 @@ Reglas para cada pregunta:
 - "opciones": exactamente 4 opciones con el formato "a) ...", "b) ...", "c) ...", "d) ...".
 - "respuesta_correcta": copia EXACTA, carácter por carácter, de una de las 4 opciones (incluida la letra).
 - "justificacion_pedagogica": por qué es correcta, basada en el texto.
+- "fragmento": el número N del [Fragmento N] del que sale la pregunta.
+- "cita": una o dos oraciones copiadas TEXTUALMENTE de ese fragmento (sin cambiar ni una palabra) que respaldan la respuesta correcta.
 
 Contexto del PDF:
 {contexto}
@@ -116,11 +123,68 @@ def validar_preguntas(datos, num_preguntas: int) -> list[dict]:
             "respuesta_correcta": correcta,
             "justificacion_pedagogica": str(item.get("justificacion_pedagogica", "")).strip(),
             "puntuacion": 1,
+            # Datos crudos del origen; agregar_fuentes los convierte en "fuente" y los quita
+            "fragmento": item.get("fragmento"),
+            "cita": str(item.get("cita") or "").strip(),
         })
 
     if not validas:
         raise RespuestaInvalida("La IA no devolvió preguntas válidas. Intenta de nuevo.")
     return validas[:num_preguntas]
+
+
+LARGO_MINIMO_CITA = 15
+
+
+def _comparable(texto: str) -> str:
+    """Minúsculas y espacios colapsados (el PDF parte líneas donde el modelo no lo hace)."""
+    return re.sub(r"\s+", " ", texto).strip().lower()
+
+
+def _limpiar_cita(cita: str) -> str:
+    """Quita comillas y puntos suspensivos con que el modelo a veces envuelve la cita."""
+    return cita.strip().strip("\"'«»“”‘’").strip().removeprefix("...").removesuffix("...").strip()
+
+
+def _numero(valor) -> int | None:
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def buscar_fuente(numero, cita: str, fragmentos: list[dict]) -> dict | None:
+    """
+    La fuente de una pregunta a partir del fragmento y la cita que indicó el modelo.
+    - La cita se busca primero en el fragmento indicado y luego en los demás
+      (el modelo a veces se equivoca de número pero copia bien el texto).
+    - Si la cita no aparece en ningún fragmento, se usa el fragmento indicado completo.
+    - Si tampoco el número es válido, no hay fuente (None).
+    """
+    por_numero = {f["numero"]: f for f in fragmentos}
+    indicado = por_numero.get(_numero(numero))
+    cita = _limpiar_cita(cita)
+    if len(cita) >= LARGO_MINIMO_CITA:
+        buscada = _comparable(cita)
+        candidatos = ([indicado] if indicado else []) + [f for f in fragmentos if f is not indicado]
+        for fragmento in candidatos:
+            if buscada in _comparable(fragmento["texto"]):
+                return {"texto": cita, "pagina": fragmento["pagina"], "pagina_fin": fragmento["pagina_fin"]}
+    if indicado:
+        return {"texto": indicado["texto"], "pagina": indicado["pagina"], "pagina_fin": indicado["pagina_fin"]}
+    return None
+
+
+def agregar_fuentes(preguntas: list[dict], fragmentos: list[dict]) -> list[dict]:
+    """Reemplaza los campos crudos `fragmento` y `cita` por `fuente` (cuando se pudo determinar)."""
+    resultado = []
+    for pregunta in preguntas:
+        pregunta = dict(pregunta)
+        fuente = buscar_fuente(pregunta.pop("fragmento", None), pregunta.pop("cita", "") or "", fragmentos)
+        if fuente:
+            pregunta["fuente"] = fuente
+        resultado.append(pregunta)
+    return resultado
 
 
 def generar_preguntas(contexto: str, num_preguntas: int, complejidad: str = COMPLEJIDAD_PREDETERMINADA) -> list[dict]:
