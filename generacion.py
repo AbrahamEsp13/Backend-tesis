@@ -5,7 +5,7 @@
   (la calificación compara textos). Si el modelo respondió con una letra ("b", "b)")
   o con el texto sin la letra, se corrige; si no se puede, la pregunta se descarta.
 - Cada pregunta indica de qué fragmento del contexto salió y una cita textual. `agregar_fuentes`
-  comprueba que la cita exista en el documento y guarda `fuente: {texto, pagina, pagina_fin}`,
+  comprueba que la cita exista en el documento y guarda `fuente: {texto, pagina, pagina_fin, literal}`,
   que el estudiante ve después de entregar ("Revisa esto en tu material").
 """
 import json
@@ -169,9 +169,9 @@ def buscar_fuente(numero, cita: str, fragmentos: list[dict]) -> dict | None:
         candidatos = ([indicado] if indicado else []) + [f for f in fragmentos if f is not indicado]
         for fragmento in candidatos:
             if buscada in _comparable(fragmento["texto"]):
-                return {"texto": cita, "pagina": fragmento["pagina"], "pagina_fin": fragmento["pagina_fin"]}
+                return {"texto": cita, "pagina": fragmento["pagina"], "pagina_fin": fragmento["pagina_fin"], "literal": True}
     if indicado:
-        return {"texto": indicado["texto"], "pagina": indicado["pagina"], "pagina_fin": indicado["pagina_fin"]}
+        return {"texto": indicado["texto"], "pagina": indicado["pagina"], "pagina_fin": indicado["pagina_fin"], "literal": False}
     return None
 
 

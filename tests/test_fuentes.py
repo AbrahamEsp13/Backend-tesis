@@ -36,17 +36,17 @@ def test_fragmentos_conservan_su_posicion():
 
 def test_cita_textual_en_el_fragmento_indicado():
     fuente = generacion.buscar_fuente(2, "oculta el estado interno de un objeto", FRAGMENTOS)
-    assert fuente == {"texto": "oculta el estado interno de un objeto", "pagina": 3, "pagina_fin": 4}
+    assert fuente == {"texto": "oculta el estado interno de un objeto", "pagina": 3, "pagina_fin": 4, "literal": True}
 
 
 def test_cita_en_otro_fragmento_usa_las_paginas_correctas():
     fuente = generacion.buscar_fuente(2, "«permite que una clase reutilice el código»", FRAGMENTOS)
-    assert fuente == {"texto": "permite que una clase reutilice el código", "pagina": 2, "pagina_fin": 2}
+    assert fuente == {"texto": "permite que una clase reutilice el código", "pagina": 2, "pagina_fin": 2, "literal": True}
 
 
 def test_cita_inventada_usa_el_fragmento_completo():
     fuente = generacion.buscar_fuente("1", "esto no aparece en el documento", FRAGMENTOS)
-    assert fuente == {"texto": FRAGMENTOS[0]["texto"], "pagina": 2, "pagina_fin": 2}
+    assert fuente == {"texto": FRAGMENTOS[0]["texto"], "pagina": 2, "pagina_fin": 2, "literal": False}
 
 
 def test_sin_cita_ni_fragmento_valido_no_hay_fuente():
@@ -76,7 +76,7 @@ def test_la_generacion_guarda_la_fuente(cliente, registrar, ia_simulada):
                              data={"num_preguntas": 1, "nombre_examen": "Parcial", "materia": "POO"})
     assert respuesta.status_code == 200
     pregunta = cliente.get("/api/cuestionarios", headers=docente).json()["data"][0]["preguntas_json"][0]
-    assert pregunta["fuente"] == {"texto": "define los atributos y métodos", "pagina": 4, "pagina_fin": 5}
+    assert pregunta["fuente"] == {"texto": "define los atributos y métodos", "pagina": 4, "pagina_fin": 5, "literal": True}
     assert "fragmento" not in pregunta and "cita" not in pregunta
 
 

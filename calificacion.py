@@ -5,7 +5,8 @@ califica con las preguntas guardadas y solo entonces devuelve la corrección.
 """
 
 # Campos que el estudiante no debe ver mientras resuelve el examen
-CAMPOS_PRIVADOS = ("respuesta_correcta", "justificacion_pedagogica", "fuente")
+# (la valoración del docente no es secreta, pero no le sirve al estudiante)
+CAMPOS_PRIVADOS = ("respuesta_correcta", "justificacion_pedagogica", "fuente", "valoracion")
 
 
 def puntos_de_pregunta(pregunta: dict) -> float:

@@ -29,6 +29,7 @@ from calificacion import calificar, ocultar_respuestas
 # --- CLASES (grupos) ---
 import clases
 import reportes
+import valoraciones
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
@@ -101,6 +102,7 @@ app.add_middleware(
 
 app.include_router(clases.router)
 app.include_router(reportes.router)
+app.include_router(valoraciones.router)
 
 CREDITOS_DIARIOS = 5
 
@@ -476,7 +478,9 @@ def revisar_intento(intento_id: int, usuario: Usuario = Depends(usuario_actual),
             "id": cuestionario.id,
             "nombre_examen": cuestionario.nombre_examen or cuestionario.nombre_documento,
             "materia": cuestionario.materia,
-            "preguntas_json": cuestionario.preguntas_json or [],
+            # La valoración del docente (calidad del generador) no es para el estudiante
+            "preguntas_json": (cuestionario.preguntas_json or []) if usuario.id == cuestionario.usuario_id
+            else valoraciones.sin_valoraciones(cuestionario.preguntas_json),
         },
         # Preguntas de este examen que el estudiante del intento ya reportó
         "preguntas_reportadas": reportes.preguntas_reportadas(intento.estudiante_id, cuestionario.id, db),
@@ -568,7 +572,7 @@ def clonar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente
             nombre_documento=cuestionario_original.nombre_documento,
             materia=cuestionario_original.materia,
             complejidad=cuestionario_original.complejidad,
-            preguntas_json=cuestionario_original.preguntas_json,
+            preguntas_json=valoraciones.sin_valoraciones(cuestionario_original.preguntas_json),
             usuario_id=usuario.id,       # <--- Se asigna al docente que lo clonó (del token)
             publicado=False,             # Nace como borrador privado
             compartido_comunidad=False   # No se vuelve a auto-compartir

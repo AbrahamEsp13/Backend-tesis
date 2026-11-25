@@ -53,11 +53,14 @@ El archivo `.env` está en `.gitignore`: no se sube al repositorio.
 |---|---|
 | `main.py` | Aplicación FastAPI: autenticación, cuestionarios, generación, intentos, comunidad y cuenta. |
 | `clases.py` | Endpoints de clases (`/api/clases`) y reglas de visibilidad para estudiantes. |
+| `reportes.py` | Reportes de preguntas problemáticas hechos por los estudiantes. |
+| `valoraciones.py` | Calidad del generador: el docente valora cada pregunta generada; estadísticas por complejidad. |
 | `auth.py` | Tokens JWT y dependencias `usuario_actual` / `docente_actual`. |
 | `database.py` | Modelos de SQLAlchemy y migración de columnas al arrancar. |
-| `rag.py` | Recuperación: extrae el texto del PDF y selecciona fragmentos por cobertura temática. |
-| `generacion.py` | Generación con Gemini (salida JSON con esquema), niveles de complejidad y validación de preguntas. |
+| `rag.py` | Recuperación: extrae el texto del PDF, selecciona fragmentos por cobertura temática y registra sus páginas. |
+| `generacion.py` | Generación con Gemini (salida JSON con esquema), niveles de complejidad, validación de preguntas y cita al documento (`fuente`). |
 | `calificacion.py` | Calificación de intentos en el servidor y ocultamiento de la clave para estudiantes. |
+| `exportar_valoraciones.py` | Exporta la calidad del generador de todos los docentes (resumen y CSV) para la tesis. |
 | `prueba_rag.py`, `ver_modelos.py` | Scripts de prueba manual (no forman parte de la API). |
 
 ## Reglas principales
@@ -82,7 +85,9 @@ La referencia completa e interactiva está en `/docs` con el servidor en marcha.
 | Autenticación | `POST /api/auth/register`, `POST /api/auth/login` |
 | Cuenta | `PUT /api/usuarios/{id}/perfil`, `PUT .../password`, `PUT .../preferencias`, `GET .../creditos`, `DELETE /api/usuarios/{id}` |
 | Generación | `POST /api/generar-cuestionario` (PDF, número de preguntas, complejidad) |
-| Cuestionarios | `GET /api/cuestionarios`, `PUT/DELETE /api/cuestionarios/{id}`, `PUT .../publicar`, `.../despublicar`, `.../compartir`, `POST .../clonar` |
+| Cuestionarios | `GET /api/cuestionarios`, `PUT/DELETE /api/cuestionarios/{id}`, `PUT .../publicar` (con `clases` opcional: publica y asigna), `GET .../clases`, `PUT .../despublicar`, `.../compartir`, `POST .../clonar` |
 | Intentos | `POST /api/cuestionarios/{id}/intentos` (estudiante; devuelve clave y retroalimentación), `GET /api/cuestionarios/{id}/intentos` (docente), `GET /api/intentos/mios` (estudiante), `GET /api/intentos/{id}` (revisión: el estudiante autor o el docente dueño) |
+| Reportes | `POST /api/intentos/{id}/reportes` (estudiante), `DELETE /api/cuestionarios/{id}/reportes/{rid}` (docente); el docente los recibe en `GET .../intentos` |
+| Calidad del generador | `PUT /api/cuestionarios/{id}/preguntas/{i}/valoracion`, `GET /api/estadisticas/generador` |
 | Clases | `GET/POST /api/clases`, `GET/PUT/DELETE /api/clases/{id}`, `PUT .../codigo`, `POST/DELETE .../cuestionarios/{cid}`, `DELETE .../estudiantes/{eid}`, `POST /api/clases/unirse`, `DELETE .../salir` |
 | Comunidad | `GET /api/comunidad/cuestionarios` |
