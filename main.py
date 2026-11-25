@@ -30,6 +30,7 @@ from calificacion import calificar, ocultar_respuestas
 import clases
 import reportes
 import valoraciones
+import resumen_docente
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
@@ -103,6 +104,7 @@ app.add_middleware(
 app.include_router(clases.router)
 app.include_router(reportes.router)
 app.include_router(valoraciones.router)
+app.include_router(resumen_docente.router)
 
 CREDITOS_DIARIOS = 5
 

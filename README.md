@@ -54,6 +54,7 @@ El archivo `.env` está en `.gitignore`: no se sube al repositorio.
 | `main.py` | Aplicación FastAPI: autenticación, cuestionarios, generación, intentos, comunidad y cuenta. |
 | `clases.py` | Endpoints de clases (`/api/clases`) y reglas de visibilidad para estudiantes. |
 | `reportes.py` | Reportes de preguntas problemáticas hechos por los estudiantes. |
+| `resumen_docente.py` | Resumen para el inicio del docente: entregas recientes, pendientes y promedio por clase. |
 | `valoraciones.py` | Calidad del generador: el docente valora cada pregunta generada; estadísticas por complejidad. |
 | `auth.py` | Tokens JWT y dependencias `usuario_actual` / `docente_actual`. |
 | `database.py` | Modelos de SQLAlchemy y migración de columnas al arrancar. |
@@ -91,3 +92,4 @@ La referencia completa e interactiva está en `/docs` con el servidor en marcha.
 | Calidad del generador | `PUT /api/cuestionarios/{id}/preguntas/{i}/valoracion`, `GET /api/estadisticas/generador` |
 | Clases | `GET/POST /api/clases`, `GET/PUT/DELETE /api/clases/{id}`, `PUT .../codigo`, `POST/DELETE .../cuestionarios/{cid}`, `DELETE .../estudiantes/{eid}`, `POST /api/clases/unirse`, `DELETE .../salir` |
 | Comunidad | `GET /api/comunidad/cuestionarios` |
+| Inicio del docente | `GET /api/docente/resumen` |
