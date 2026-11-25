@@ -22,40 +22,27 @@ _cliente = genai.Client(
     http_options=types.HttpOptions(api_version="v1beta"),
 )
 MODELO = "gemini-2.5-flash"
-NIVELES_BLOOM = ["Recordar", "Comprender", "Aplicar", "Analizar", "Evaluar", "Crear"]
-
-# Nivel de complejidad elegido por el docente -> niveles de Bloom e indicaciones para el prompt.
-# "Crear" queda fuera de "avanzado": producir algo nuevo no se mide bien con opción múltiple.
+# Nivel de complejidad elegido por el docente -> indicaciones para el prompt.
 COMPLEJIDADES = {
-    "basico": {
-        "niveles": ["Recordar", "Comprender"],
-        "indicaciones": (
-            "Nivel BÁSICO: preguntas directas sobre definiciones, datos, conceptos y ejemplos que aparecen "
-            "explícitamente en el texto. Redacción breve y clara. Los distractores deben ser incorrectos "
-            "para quien leyó el material, sin trampas ni matices finos."
-        ),
-    },
-    "equilibrado": {
-        "niveles": NIVELES_BLOOM,
-        "indicaciones": (
-            "Nivel EQUILIBRADO: combina preguntas de memoria y comprensión con otras de aplicación y análisis, "
-            "repartidas entre los niveles indicados."
-        ),
-    },
-    "avanzado": {
-        "niveles": ["Aplicar", "Analizar", "Evaluar"],
-        "indicaciones": (
-            "Nivel AVANZADO: evita preguntas de simple memorización. Plantea situaciones o casos breves que exijan "
-            "aplicar, comparar, inferir causas/consecuencias o juzgar la mejor opción con base en el texto. "
-            "Los distractores deben ser plausibles y reflejar errores conceptuales comunes."
-        ),
-    },
+    "basico": (
+        "Nivel BÁSICO: preguntas directas sobre definiciones, datos, conceptos y ejemplos que aparecen "
+        "explícitamente en el texto. Redacción breve y clara. Los distractores deben ser incorrectos "
+        "para quien leyó el material, sin trampas ni matices finos."
+    ),
+    "equilibrado": (
+        "Nivel EQUILIBRADO: combina preguntas sobre conceptos y definiciones con otras que pidan "
+        "explicar, aplicar o relacionar ideas del texto."
+    ),
+    "avanzado": (
+        "Nivel AVANZADO: evita preguntas de simple memorización. Plantea situaciones o casos breves que exijan "
+        "aplicar, comparar, inferir causas/consecuencias o juzgar la mejor opción con base en el texto. "
+        "Los distractores deben ser plausibles y reflejar errores conceptuales comunes."
+    ),
 }
 COMPLEJIDAD_PREDETERMINADA = "equilibrado"
 
 
 class PreguntaIA(BaseModel):
-    nivel_bloom: str
     pregunta: str
     opciones: list[str]
     respuesta_correcta: str
@@ -67,19 +54,17 @@ class RespuestaInvalida(ValueError):
 
 
 def construir_prompt(contexto: str, num_preguntas: int, complejidad: str = COMPLEJIDAD_PREDETERMINADA) -> str:
-    nivel = COMPLEJIDADES.get(complejidad, COMPLEJIDADES[COMPLEJIDAD_PREDETERMINADA])
-    niveles = ", ".join(nivel["niveles"])
+    indicaciones = COMPLEJIDADES.get(complejidad, COMPLEJIDADES[COMPLEJIDAD_PREDETERMINADA])
     return f"""Eres un profesor experto en pedagogía. Genera una evaluación basada ÚNICAMENTE en el contexto proporcionado. No inventes información.
 
-Genera exactamente {num_preguntas} preguntas de opción múltiple, distribuidas en los niveles de la Taxonomía de Bloom ({niveles}).
-{nivel["indicaciones"]}
+Genera exactamente {num_preguntas} preguntas de opción múltiple.
+{indicaciones}
 Reparte las preguntas entre los distintos fragmentos del contexto para cubrir todo el material.
 
 Reglas para cada pregunta:
 - "opciones": exactamente 4 opciones con el formato "a) ...", "b) ...", "c) ...", "d) ...".
 - "respuesta_correcta": copia EXACTA, carácter por carácter, de una de las 4 opciones (incluida la letra).
 - "justificacion_pedagogica": por qué es correcta, basada en el texto.
-- "nivel_bloom": uno de {niveles}.
 
 Contexto del PDF:
 {contexto}
@@ -126,7 +111,6 @@ def validar_preguntas(datos, num_preguntas: int) -> list[dict]:
         if correcta is None:
             continue
         validas.append({
-            "nivel_bloom": str(item.get("nivel_bloom", "")).strip() or "Comprender",
             "pregunta": pregunta,
             "opciones": opciones,
             "respuesta_correcta": correcta,

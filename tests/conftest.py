@@ -112,6 +112,6 @@ def ia_simulada(monkeypatch):
     def generar(contexto, num_preguntas, complejidad):
         llamadas.append({"num_preguntas": num_preguntas, "complejidad": complejidad})
         return [{"pregunta": "p", "opciones": ["a) x", "b) y"], "respuesta_correcta": "a) x",
-                 "justificacion_pedagogica": "j", "nivel_bloom": "Aplicar", "puntuacion": 1}]
+                 "justificacion_pedagogica": "j", "puntuacion": 1}]
     monkeypatch.setattr(main, "generar_preguntas", generar)
     return llamadas

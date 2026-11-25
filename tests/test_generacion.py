@@ -17,19 +17,23 @@ def generar(cliente, encabezados, **datos):
 
 def test_prompt_basico():
     prompt = generacion.construir_prompt("CTX", 5, "basico")
-    assert "(Recordar, Comprender)" in prompt and "BÁSICO" in prompt
-    assert "Analizar" not in prompt
+    assert "BÁSICO" in prompt and "AVANZADO" not in prompt
 
 
-def test_prompt_equilibrado_usa_todos_los_niveles():
+def test_prompt_equilibrado():
     prompt = generacion.construir_prompt("CTX", 5, "equilibrado")
-    assert "Recordar, Comprender, Aplicar, Analizar, Evaluar, Crear" in prompt
+    assert "EQUILIBRADO" in prompt
 
 
 def test_prompt_avanzado():
     prompt = generacion.construir_prompt("CTX", 5, "avanzado")
-    assert "(Aplicar, Analizar, Evaluar)" in prompt and "AVANZADO" in prompt
-    assert "Recordar" not in prompt
+    assert "AVANZADO" in prompt and "BÁSICO" not in prompt
+
+
+def test_prompt_no_menciona_bloom():
+    for complejidad in generacion.COMPLEJIDADES:
+        prompt = generacion.construir_prompt("CTX", 5, complejidad)
+        assert "Bloom" not in prompt and "nivel_bloom" not in prompt
 
 
 def test_complejidad_desconocida_cae_en_equilibrado():

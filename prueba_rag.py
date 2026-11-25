@@ -63,15 +63,11 @@ def ejecutar_prueba_rag(ruta_pdf):
     prompt_final = f"""
     Eres un profesor experto en pedagogía. Tu tarea es generar una evaluación basada ÚNICAMENTE en el contexto proporcionado. No inventes información.
     
-    Genera exactamente 3 preguntas de opción múltiple. Cada pregunta debe corresponder a un nivel cognitivo diferente de la Taxonomía de Bloom:
-    1. Recordar
-    2. Comprender
-    3. Analizar
+    Genera exactamente 3 preguntas de opción múltiple.
     
     El formato de salida DEBE ser un arreglo JSON con la siguiente estructura exacta para cada pregunta:
     [
       {{
-        "nivel_bloom": "Recordar",
         "pregunta": "¿...",
         "opciones": ["a) ...", "b) ...", "c) ...", "d) ..."],
         "respuesta_correcta": "La opción correcta exacta",
