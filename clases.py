@@ -91,6 +91,29 @@ def clase_propia(clase_id: int, usuario: Usuario, db: Session) -> Clase:
     return clase
 
 
+def ids_clases_de_cuestionario(cuestionario_id: int, db: Session) -> list[int]:
+    filas = db.query(ClaseCuestionario.clase_id).filter(ClaseCuestionario.cuestionario_id == cuestionario_id)
+    return sorted(fila.clase_id for fila in filas)
+
+
+def sincronizar_asignaciones(cuestionario: Cuestionario, clase_ids: list[int], usuario: Usuario, db: Session):
+    """
+    Deja el cuestionario asignado exactamente a `clase_ids` (todas del docente; si no, 404/403).
+    No hace commit: lo hace quien llama, para que publicar y asignar sean una sola operación.
+    """
+    deseadas = set(clase_ids)
+    for clase_id in deseadas:
+        clase_propia(clase_id, usuario, db)
+    actuales = set(ids_clases_de_cuestionario(cuestionario.id, db))
+    sobrantes = actuales - deseadas
+    if sobrantes:
+        db.query(ClaseCuestionario).filter(
+            ClaseCuestionario.cuestionario_id == cuestionario.id, ClaseCuestionario.clase_id.in_(sobrantes)
+        ).delete(synchronize_session=False)
+    for clase_id in sorted(deseadas - actuales):
+        db.add(ClaseCuestionario(clase_id=clase_id, cuestionario_id=cuestionario.id))
+
+
 def _contar(modelo, clase_id: int, db: Session) -> int:
     return db.query(modelo).filter(modelo.clase_id == clase_id).count()
 

@@ -52,6 +52,10 @@ class LoginUsuario(BaseModel):
 class ActualizarCuestionario(BaseModel):
     preguntas_json: list
 
+class Publicacion(BaseModel):
+    # None: solo publica. Una lista: además deja el examen asignado exactamente a esas clases.
+    clases: list[int] | None = Field(default=None, max_length=200)
+
 class CambioPassword(BaseModel):
     password_actual: str
     password_nueva: str = Field(min_length=8, max_length=128)  # = MIN_PASSWORD
@@ -319,12 +323,21 @@ def obtener_historial(usuario: Usuario = Depends(usuario_actual), db: Session = 
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error al obtener el historial.")
 
-@app.put("/api/cuestionarios/{cuestionario_id}/publicar")
-def publicar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+@app.get("/api/cuestionarios/{cuestionario_id}/clases")
+def clases_del_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    """Ids de las clases a las que está asignado el cuestionario (para el diálogo de publicar)."""
     cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
+    return {"clases": clases.ids_clases_de_cuestionario(cuestionario.id, db)}
+
+@app.put("/api/cuestionarios/{cuestionario_id}/publicar")
+def publicar_cuestionario(cuestionario_id: int, datos: Publicacion | None = None, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    """Publica el cuestionario y, si se envían `clases`, lo asigna a ellas en la misma operación."""
+    cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
+    if datos is not None and datos.clases is not None:
+        clases.sincronizar_asignaciones(cuestionario, datos.clases, usuario, db)
     cuestionario.publicado = True
     db.commit()
-    return {"mensaje": "Cuestionario publicado exitosamente"}
+    return {"mensaje": "Cuestionario publicado exitosamente", "clases": clases.ids_clases_de_cuestionario(cuestionario.id, db)}
 
 @app.put("/api/cuestionarios/{cuestionario_id}/despublicar")
 def despublicar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):

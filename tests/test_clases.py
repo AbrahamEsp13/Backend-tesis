@@ -141,3 +141,53 @@ def test_eliminar_clase_conserva_examenes_e_intentos(cliente, db, clase_con_exam
     assert db.query(Cuestionario).count() == 1
     assert db.query(Intento).count() == 1
     assert examenes_visibles(cliente, d["estudiante"]) == []
+
+
+# ---------- Publicar y asignar en un paso ----------
+
+def test_publicar_asigna_a_las_clases_elegidas(cliente, registrar, crear_cuestionario, clase_con_examen):
+    d = clase_con_examen
+    borrador = crear_cuestionario(d["usuario_docente"]["id"], nombre="Nuevo", publicado=False)
+    otra = cliente.post("/api/clases", headers=d["docente"], json={"nombre": "3B"}).json()["clase"]
+    respuesta = cliente.put(f"/api/cuestionarios/{borrador}/publicar", headers=d["docente"],
+                            json={"clases": [d["clase"]["id"], otra["id"]]})
+    assert respuesta.status_code == 200
+    assert respuesta.json()["clases"] == sorted([d["clase"]["id"], otra["id"]])
+    assert {e["id"] for e in examenes_visibles(cliente, d["estudiante"])} == {d["examen_id"], borrador}
+    asignadas = cliente.get(f"/api/cuestionarios/{borrador}/clases", headers=d["docente"]).json()["clases"]
+    assert asignadas == sorted([d["clase"]["id"], otra["id"]])
+
+
+def test_publicar_quita_las_clases_desmarcadas(cliente, registrar, clase_con_examen):
+    d = clase_con_examen
+    otra = cliente.post("/api/clases", headers=d["docente"], json={"nombre": "3B"}).json()["clase"]
+    cliente.put(f"/api/cuestionarios/{d['examen_id']}/publicar", headers=d["docente"], json={"clases": [otra["id"]]})
+    assert examenes_visibles(cliente, d["estudiante"]) == []
+    assert cliente.get(f"/api/cuestionarios/{d['examen_id']}/clases", headers=d["docente"]).json()["clases"] == [otra["id"]]
+
+
+def test_publicar_sin_cuerpo_conserva_las_asignaciones(cliente, clase_con_examen):
+    d = clase_con_examen
+    cliente.put(f"/api/cuestionarios/{d['examen_id']}/despublicar", headers=d["docente"])
+    assert cliente.put(f"/api/cuestionarios/{d['examen_id']}/publicar", headers=d["docente"]).status_code == 200
+    assert [e["id"] for e in examenes_visibles(cliente, d["estudiante"])] == [d["examen_id"]]
+
+
+def test_publicar_en_clase_ajena_no_cambia_nada(cliente, registrar, crear_cuestionario, clase_con_examen):
+    d = clase_con_examen
+    otro, _ = registrar("otro", "docente")
+    clase_otro = cliente.post("/api/clases", headers=otro, json={"nombre": "B"}).json()["clase"]
+    borrador = crear_cuestionario(d["usuario_docente"]["id"], nombre="Nuevo", publicado=False)
+    respuesta = cliente.put(f"/api/cuestionarios/{borrador}/publicar", headers=d["docente"],
+                            json={"clases": [d["clase"]["id"], clase_otro["id"]]})
+    assert respuesta.status_code == 403
+    assert cliente.get(f"/api/cuestionarios/{borrador}/clases", headers=d["docente"]).json()["clases"] == []
+    assert [e["id"] for e in examenes_visibles(cliente, d["estudiante"])] == [d["examen_id"]]
+    assert cliente.put(f"/api/cuestionarios/{borrador}/publicar", headers=d["docente"], json={"clases": [999]}).status_code == 404
+
+
+def test_clases_del_cuestionario_solo_para_su_docente(cliente, registrar, clase_con_examen):
+    d = clase_con_examen
+    otro, _ = registrar("otro", "docente")
+    assert cliente.get(f"/api/cuestionarios/{d['examen_id']}/clases", headers=otro).status_code == 403
+    assert cliente.get(f"/api/cuestionarios/{d['examen_id']}/clases", headers=d["estudiante"]).status_code == 403
