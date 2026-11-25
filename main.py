@@ -28,6 +28,7 @@ from calificacion import calificar, ocultar_respuestas
 
 # --- CLASES (grupos) ---
 import clases
+import reportes
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
@@ -99,6 +100,7 @@ app.add_middleware(
 )
 
 app.include_router(clases.router)
+app.include_router(reportes.router)
 
 CREDITOS_DIARIOS = 5
 
@@ -289,11 +291,13 @@ def eliminar_cuenta(usuario_id: int, datos: ConfirmarPassword, usuario: Usuario 
             ids = [fila.id for fila in db.query(Cuestionario.id).filter(Cuestionario.usuario_id == usuario.id)]
             if ids:
                 db.query(Intento).filter(Intento.cuestionario_id.in_(ids)).delete(synchronize_session=False)
+                reportes.borrar_reportes(db, cuestionario_ids=ids)
                 clases.borrar_asignaciones_de_cuestionarios(ids, db)
                 db.query(Cuestionario).filter(Cuestionario.id.in_(ids)).delete(synchronize_session=False)
             clases.borrar_clases_de_docente(usuario.id, db)
         else:
             db.query(Intento).filter(Intento.estudiante_id == usuario.id).delete(synchronize_session=False)
+            reportes.borrar_reportes(db, estudiante_id=usuario.id)
             clases.borrar_membresias_de_estudiante(usuario.id, db)
         db.delete(usuario)
         db.commit()
@@ -354,6 +358,7 @@ def despublicar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(do
 def eliminar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
     cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     db.query(Intento).filter(Intento.cuestionario_id == cuestionario.id).delete()
+    reportes.borrar_reportes(db, cuestionario_ids=[cuestionario.id])
     clases.borrar_asignaciones_de_cuestionarios([cuestionario.id], db)
     db.delete(cuestionario)
     db.commit()
@@ -473,6 +478,8 @@ def revisar_intento(intento_id: int, usuario: Usuario = Depends(usuario_actual),
             "materia": cuestionario.materia,
             "preguntas_json": cuestionario.preguntas_json or [],
         },
+        # Preguntas de este examen que el estudiante del intento ya reportó
+        "preguntas_reportadas": reportes.preguntas_reportadas(intento.estudiante_id, cuestionario.id, db),
     }
 
 @app.get("/api/cuestionarios/{cuestionario_id}/intentos")
@@ -499,6 +506,7 @@ def listar_intentos(cuestionario_id: int, usuario: Usuario = Depends(docente_act
             for intento, nombre, correo in filas
         ],
         "clases": clases_asignadas,
+        "reportes": reportes.reportes_de_cuestionario(cuestionario.id, db),
     }
 
 

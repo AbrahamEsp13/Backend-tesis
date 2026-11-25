@@ -84,6 +84,21 @@ class Intento(Base):
     # Seguridad que marcó el estudiante (opcional): { "<índice>": true = seguro, false = adivinando }
     seguridad = Column(JSON, nullable=True)
 
+class Reporte(Base):
+    """Un estudiante marca una pregunta como problemática (una vez por pregunta y examen)."""
+    __tablename__ = "reportes"
+    __table_args__ = (UniqueConstraint("estudiante_id", "cuestionario_id", "pregunta"),)
+
+    id = Column(Integer, primary_key=True)
+    cuestionario_id = Column(Integer, index=True, nullable=False)
+    estudiante_id = Column(Integer, index=True, nullable=False)
+    intento_id = Column(Integer, nullable=False)
+    pregunta = Column(Integer, nullable=False)          # índice en preguntas_json
+    texto_pregunta = Column(String, nullable=False)     # como estaba al reportarla
+    motivo = Column(String, nullable=False)
+    comentario = Column(String, nullable=True)
+    fecha = Column(DateTime, default=ahora_utc)
+
 class Clase(Base):
     """Grupo de un docente. Los estudiantes se unen con el código de acceso."""
     __tablename__ = "clases"
