@@ -129,3 +129,43 @@ def test_revisar_intento(cliente, registrar, clase_con_examen):
     assert cliente.get(f"/api/intentos/{intento_id}", headers=beto).status_code == 403
     assert cliente.get(f"/api/intentos/{intento_id}", headers=otro).status_code == 403
     assert cliente.get("/api/intentos/99999", headers=d["estudiante"]).status_code == 404
+
+
+# ---------- Seguridad de la respuesta (2.2) ----------
+
+def test_la_seguridad_se_guarda_sin_cambiar_la_calificacion(cliente, clase_con_examen):
+    d = clase_con_examen
+    sin = entregar(cliente, d["estudiante"], d["examen_id"], {"0": "b", "1": "b"}).json()["intento"]
+    con = cliente.post(f"/api/cuestionarios/{d['examen_id']}/intentos", headers=d["estudiante"], json={
+        "respuestas": {"0": "b", "1": "b"},
+        # "5" no existe y "x" no es un índice: se descartan
+        "seguridad": {"0": True, "1": False, "5": True, "x": False},
+    }).json()["intento"]
+    assert con["calificacion"] == sin["calificacion"]
+    assert sin["seguridad"] == {}
+    assert con["seguridad"] == {"0": True, "1": False}
+
+
+def test_seguridad_de_pregunta_sin_responder_se_descarta(cliente, clase_con_examen):
+    d = clase_con_examen
+    intento = cliente.post(f"/api/cuestionarios/{d['examen_id']}/intentos", headers=d["estudiante"],
+                           json={"respuestas": {"0": "a"}, "seguridad": {"0": False, "1": True}}).json()["intento"]
+    assert intento["seguridad"] == {"0": False}
+
+
+def test_docente_y_revision_reciben_la_seguridad(cliente, clase_con_examen):
+    d = clase_con_examen
+    intento = cliente.post(f"/api/cuestionarios/{d['examen_id']}/intentos", headers=d["estudiante"],
+                           json={"respuestas": {"0": "b"}, "seguridad": {"0": True}}).json()["intento"]
+    docente = cliente.get(f"/api/cuestionarios/{d['examen_id']}/intentos", headers=d["docente"]).json()["data"]
+    assert docente[0]["seguridad"] == {"0": True}
+    assert cliente.get("/api/intentos/mios", headers=d["estudiante"]).json()["data"][0]["seguridad"] == {"0": True}
+    revision = cliente.get(f"/api/intentos/{intento['id']}", headers=d["estudiante"]).json()
+    assert revision["intento"]["seguridad"] == {"0": True}
+
+
+def test_seguridad_invalida_se_rechaza(cliente, clase_con_examen):
+    d = clase_con_examen
+    respuesta = cliente.post(f"/api/cuestionarios/{d['examen_id']}/intentos", headers=d["estudiante"],
+                             json={"respuestas": {"0": "a"}, "seguridad": {"0": "tal vez"}})
+    assert respuesta.status_code == 422

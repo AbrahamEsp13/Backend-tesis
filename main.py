@@ -66,6 +66,8 @@ class ConfirmarPassword(BaseModel):
 class EntregaIntento(BaseModel):
     respuestas: dict[str, str]   # { "<índice de pregunta>": "<opción elegida>" }
     tiempo_segundos: int | None = Field(default=None, ge=0)
+    # Opcional, no cambia la calificación: { "<índice>": true = seguro, false = adivinando }
+    seguridad: dict[str, bool] = Field(default_factory=dict)
 
 class Preferencias(BaseModel):
     complejidad_preferida: Complejidad
@@ -391,6 +393,7 @@ def intento_a_dict(intento: Intento) -> dict:
         "calificacion": intento.calificacion,
         "tiempo_segundos": intento.tiempo_segundos,
         "fecha": intento.fecha,
+        "seguridad": intento.seguridad or {},
     }
 
 @app.post("/api/cuestionarios/{cuestionario_id}/intentos")
@@ -405,6 +408,8 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
     preguntas = cuestionario.preguntas_json or []
     # Solo se guardan respuestas a preguntas que existen
     respuestas = {k: v for k, v in datos.respuestas.items() if k.isdigit() and int(k) < len(preguntas)}
+    # La seguridad solo cuenta en preguntas respondidas
+    seguridad = {k: v for k, v in datos.seguridad.items() if k in respuestas}
     resultado = calificar(preguntas, respuestas)
 
     intento = Intento(
@@ -415,6 +420,7 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
         puntos_totales=resultado["puntos_totales"],
         calificacion=resultado["calificacion"],
         tiempo_segundos=datos.tiempo_segundos,
+        seguridad=seguridad,
     )
     try:
         db.add(intento)

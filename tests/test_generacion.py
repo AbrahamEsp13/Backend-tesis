@@ -137,6 +137,7 @@ def test_migracion_agrega_columnas_a_una_base_antigua(tmp_path):
         conexion.execute(text("CREATE TABLE usuarios (id INTEGER PRIMARY KEY, nombre VARCHAR)"))
         conexion.execute(text("CREATE TABLE cuestionarios_v3 (id INTEGER PRIMARY KEY, nombre_examen VARCHAR)"))
         conexion.execute(text("INSERT INTO cuestionarios_v3 (id, nombre_examen) VALUES (1, 'viejo')"))
+        conexion.execute(text("CREATE TABLE intentos (id INTEGER PRIMARY KEY, calificacion FLOAT)"))
 
     agregar_columnas_faltantes(motor)
     agregar_columnas_faltantes(motor)  # una segunda vez no debe fallar
@@ -144,6 +145,7 @@ def test_migracion_agrega_columnas_a_una_base_antigua(tmp_path):
     columnas = lambda tabla: {c["name"] for c in inspect(motor).get_columns(tabla)}
     assert "complejidad_preferida" in columnas("usuarios")
     assert "complejidad" in columnas("cuestionarios_v3")
+    assert "seguridad" in columnas("intentos")
     with motor.connect() as conexion:
         assert conexion.execute(text("SELECT nombre_examen FROM cuestionarios_v3")).scalar() == "viejo"
     motor.dispose()

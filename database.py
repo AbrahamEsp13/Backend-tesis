@@ -81,6 +81,8 @@ class Intento(Base):
     calificacion = Column(Float, nullable=False)       # sobre 10
     tiempo_segundos = Column(Integer, nullable=True)
     fecha = Column(DateTime, default=ahora_utc)
+    # Seguridad que marcó el estudiante (opcional): { "<índice>": true = seguro, false = adivinando }
+    seguridad = Column(JSON, nullable=True)
 
 class Clase(Base):
     """Grupo de un docente. Los estudiantes se unen con el código de acceso."""
@@ -121,6 +123,7 @@ Base.metadata.create_all(bind=engine)
 COLUMNAS_NUEVAS = {
     Usuario.__tablename__: {"complejidad_preferida": "VARCHAR"},
     Cuestionario.__tablename__: {"complejidad": "VARCHAR"},
+    Intento.__tablename__: {"seguridad": "JSON"},
 }
 
 def agregar_columnas_faltantes(motor=engine):
@@ -128,6 +131,8 @@ def agregar_columnas_faltantes(motor=engine):
     inspector = inspect(motor)
     with motor.begin() as conexion:
         for tabla, columnas in COLUMNAS_NUEVAS.items():
+            if not inspector.has_table(tabla):
+                continue  # create_all la crea completa
             existentes = {c["name"] for c in inspector.get_columns(tabla)}
             for nombre, tipo in columnas.items():
                 if nombre not in existentes:
