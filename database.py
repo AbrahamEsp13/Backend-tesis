@@ -75,6 +75,7 @@ class Usuario(Base):
     especialidad = Column(String, nullable=True)
     complejidad_preferida = Column(String, nullable=True)  # preferencia del generador IA (docentes)
     regeneraciones_usadas = Column(Integer, nullable=True)  # preguntas regeneradas hoy (4.3); se reinicia con los créditos
+    version_sesion = Column(Integer, nullable=True)  # 4.7: va en el token; al restablecer la contraseña sube y cierra las sesiones
 
 class Intento(Base):
     """Una entrega de un estudiante. Cada reintento es un registro nuevo."""
@@ -162,6 +163,17 @@ class FormatoImpresion(Base):
     fecha_creacion = Column(DateTime, default=ahora_utc)
     fecha_actualizacion = Column(DateTime, default=ahora_utc)
 
+class RestablecimientoPassword(Base):
+    """Enlace para restablecer la contraseña (4.7). Solo se guarda el hash del token."""
+    __tablename__ = "restablecimientos_password"
+
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, index=True, nullable=False)
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+    expira = Column(DateTime, nullable=False)
+    usado = Column(Boolean, default=False, nullable=False)
+    fecha = Column(DateTime, default=ahora_utc)
+
 class Clase(Base):
     """Grupo de un docente. Los estudiantes se unen con el código de acceso."""
     __tablename__ = "clases"
@@ -199,7 +211,7 @@ Base.metadata.create_all(bind=engine)
 # create_all no agrega columnas nuevas a tablas que ya existen: se agregan aquí.
 # (Solo columnas opcionales; cada una se agrega una vez y después se omite.)
 COLUMNAS_NUEVAS = {
-    Usuario.__tablename__: {"complejidad_preferida": "VARCHAR", "regeneraciones_usadas": "INTEGER"},
+    Usuario.__tablename__: {"complejidad_preferida": "VARCHAR", "regeneraciones_usadas": "INTEGER", "version_sesion": "INTEGER"},
     Cuestionario.__tablename__: {
         "complejidad": "VARCHAR",
         "fecha_limite": "TIMESTAMP",

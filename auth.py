@@ -35,6 +35,7 @@ def crear_token(usuario: Usuario) -> str:
     payload = {
         "sub": str(usuario.id),
         "rol": usuario.rol,
+        "ver": usuario.version_sesion or 0,  # ver usuario_actual
         "iat": ahora,
         "exp": ahora + DURACION_TOKEN,
     }
@@ -61,6 +62,9 @@ def usuario_actual(
 
     usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
     if usuario is None:
+        raise no_autenticado
+    # 4.7: al restablecer la contraseña sube la versión y los tokens anteriores dejan de valer
+    if payload.get("ver", 0) != (usuario.version_sesion or 0):
         raise no_autenticado
     return usuario
 

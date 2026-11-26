@@ -39,6 +39,7 @@ import regeneracion
 import formatos
 import hojas
 import versiones
+import recuperacion
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
@@ -121,6 +122,7 @@ app.include_router(configuracion.router)
 app.include_router(regeneracion.router)
 app.include_router(formatos.router)
 app.include_router(hojas.router)
+app.include_router(recuperacion.router)
 
 # 4.6: ids estables en las opciones de los exámenes y en las respuestas de los intentos antiguos.
 # Es idempotente; si falla, la app arranca igual (los datos sin ids se siguen calificando por texto).
@@ -343,6 +345,7 @@ def eliminar_cuenta(usuario_id: int, datos: ConfirmarPassword, usuario: Usuario 
             practicas.borrar_practicas(db, estudiante_id=usuario.id)
             configuracion.borrar_inicios(db, estudiante_id=usuario.id)
             clases.borrar_membresias_de_estudiante(usuario.id, db)
+        recuperacion.borrar_restablecimientos(db, usuario.id)
         db.delete(usuario)
         db.commit()
     except Exception as e:

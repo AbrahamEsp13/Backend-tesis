@@ -44,6 +44,9 @@ Cubren autenticación, CORS, cuenta, clases, intentos y calificación, generaci�
 | `JWT_SECRET` | Sí | Clave para firmar los tokens, mínimo 32 caracteres. Generar con `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
 | `GEMINI_API_KEY` | Sí | API key de Google Gemini. |
 | `CORS_ORIGINS` | En producción | Orígenes del frontend permitidos, separados por comas (p. ej. `https://mi-app.vercel.app`). Sin ella solo se permite `http://localhost:5173`. |
+| `FRONTEND_URL` | En producción | Dirección de la app para el enlace de recuperación de contraseña (p. ej. `https://mi-app.vercel.app`). Sin ella se usa el primer origen de `CORS_ORIGINS`. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USUARIO`, `SMTP_PASSWORD` | Para enviar correos | Servidor de correo para "¿Olvidaste tu contraseña?" (Gmail u Outlook con contraseña de aplicación, o el SMTP de Resend, SendGrid, Brevo...). Puerto 587 (STARTTLS) o 465 (SSL). Sin `SMTP_HOST`, el enlace se escribe en la consola del servidor. |
+| `CORREO_REMITENTE` | No | Remitente de los correos, p. ej. `QuizAI <cuenta@gmail.com>`. Por defecto, `SMTP_USUARIO`. |
 
 El archivo `.env` está en `.gitignore`: no se sube al repositorio.
 
@@ -61,6 +64,7 @@ El archivo `.env` está en `.gitignore`: no se sube al repositorio.
 | `lectura_hojas.py` | Lectura de la hoja de respuestas en una foto (OpenCV): marcas, perspectiva y relleno de cada círculo. |
 | `hojas.py` | Calificar con foto: estudiantes del examen, leer la foto y registrar el intento en papel. |
 | `versiones.py` | Versiones del examen: orden de preguntas y opciones por intento. |
+| `recuperacion.py`, `correo.py` | Recuperar la contraseña por correo (enlace de un solo uso, 30 min) y envío por SMTP. |
 | `practicas.py` | Práctica adaptativa: preguntas nuevas, sin calificación, con los fragmentos de lo que el estudiante falló (límite diario propio). |
 | `resumen_docente.py` | Resumen para el inicio del docente: entregas recientes, pendientes y promedio por clase. |
 | `valoraciones.py` | Calidad del generador: el docente valora cada pregunta generada; estadísticas por complejidad. |
@@ -91,7 +95,7 @@ La referencia completa e interactiva está en `/docs` con el servidor en marcha.
 
 | Área | Rutas |
 |---|---|
-| Autenticación | `POST /api/auth/register`, `POST /api/auth/login` |
+| Autenticación | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/recuperar`, `POST /api/auth/restablecer/verificar`, `POST /api/auth/restablecer` |
 | Cuenta | `PUT /api/usuarios/{id}/perfil`, `PUT .../password`, `PUT .../preferencias`, `GET .../creditos`, `DELETE /api/usuarios/{id}` |
 | Generación | `POST /api/generar-cuestionario` (PDF, número de preguntas, complejidad) |
 | Cuestionarios | `GET /api/cuestionarios`, `PUT/DELETE /api/cuestionarios/{id}`, `PUT .../publicar` (con `clases` opcional: publica y asigna), `GET .../clases`, `PUT .../despublicar`, `.../compartir`, `POST .../clonar` |
