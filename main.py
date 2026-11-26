@@ -133,8 +133,10 @@ def migrar_identificadores():
     db = SessionLocal()
     try:
         cambios = identificadores.migrar(db)
-        if cambios["cuestionarios"] or cambios["intentos"]:
-            print(f"[migracion] Ids de opciones: {cambios['cuestionarios']} cuestionarios, {cambios['intentos']} intentos")
+        cambios["reportes"] = reportes.completar_ids(db)
+        if any(cambios.values()):
+            print(f"[migracion] Ids de opciones y preguntas: {cambios['cuestionarios']} cuestionarios, "
+                  f"{cambios['intentos']} intentos, {cambios['reportes']} reportes")
     except Exception as e:
         db.rollback()
         print(f"AVISO: no se pudieron migrar los ids de opciones: {e}")
@@ -426,6 +428,8 @@ def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, usuario: Usu
     cuestionario = cuestionario_propio(id, usuario, db)
     # Conserva los ids de las opciones y recalcula id_correcta (4.6)
     cuestionario.preguntas_json = normalizar_preguntas(datos.preguntas_json)
+    # Los reportes siguen a su pregunta (por id); los de preguntas borradas o regeneradas se eliminan
+    reportes.sincronizar_reportes(db, cuestionario)
     db.commit()
     # Se devuelven las preguntas con sus ids: el editor las adopta para que un segundo guardado no los cambie
     return {"mensaje": "Cuestionario actualizado correctamente", "preguntas_json": cuestionario.preguntas_json}
@@ -462,7 +466,8 @@ def intento_a_dict(intento: Intento, preguntas: list, con_correccion: bool = Tru
     de las entregas no descuadra los intentos anteriores.
     con_correccion=False (respuestas ocultas, 4.1): de las respuestas cortas solo va lo que escribió.
     """
-    respuestas, seguridad = respuestas_para_mostrar(preguntas, intento.respuestas, intento.seguridad)
+    respuestas, seguridad = respuestas_para_mostrar(preguntas, intento.respuestas, intento.seguridad, intento.respuestas_cortas)
+    cortas = identificadores.cortas_actuales(preguntas, intento.respuestas_cortas)
     return {
         "id": intento.id,
         "cuestionario_id": intento.cuestionario_id,
@@ -478,7 +483,7 @@ def intento_a_dict(intento: Intento, preguntas: list, con_correccion: bool = Tru
         "entrega_automatica": bool(intento.entrega_automatica),
         "en_papel": bool(intento.en_papel),
         # 4.2: { "<índice>": {texto, puntaje, comentario, estado} } de las respuestas cortas
-        "respuestas_cortas": (intento.respuestas_cortas or {}) if con_correccion else respuestas_cortas.sin_correccion(intento.respuestas_cortas),
+        "respuestas_cortas": cortas if con_correccion else respuestas_cortas.sin_correccion(cortas),
         # 2.6: orden en que vio preguntas y opciones (None = el original), ajustado a las preguntas actuales
         "orden": versiones.normalizar_orden(intento.orden, preguntas) if intento.orden else None,
     }
@@ -561,7 +566,7 @@ def mis_intentos(usuario: Usuario = Depends(usuario_actual), db: Session = Depen
     filas = db.query(Intento, Cuestionario) \
         .join(Cuestionario, Cuestionario.id == Intento.cuestionario_id) \
         .filter(Intento.estudiante_id == usuario.id) \
-        .order_by(Intento.fecha.desc()).all()
+        .order_by(Intento.fecha.desc(), Intento.id.desc()).all()
     return {"data": [
         {**intento_a_dict(intento, cuestionario.preguntas_json or [],
                           con_correccion=configuracion.respuestas_visibles(cuestionario, ahora_utc())),
@@ -617,7 +622,7 @@ def listar_intentos(cuestionario_id: int, usuario: Usuario = Depends(docente_act
     filas = db.query(Intento, Usuario.nombre, Usuario.correo) \
         .join(Usuario, Intento.estudiante_id == Usuario.id) \
         .filter(Intento.cuestionario_id == cuestionario.id) \
-        .order_by(Intento.fecha.desc()).all()
+        .order_by(Intento.fecha.desc(), Intento.id.desc()).all()
     clases_asignadas, clases_por_estudiante = clases.clases_de_cuestionario(cuestionario.id, db)
     return {
         "data": [

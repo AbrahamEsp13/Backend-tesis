@@ -62,6 +62,43 @@ def borrar_reportes(db: Session, *, cuestionario_ids: list[int] | None = None, e
     consulta.delete(synchronize_session=False)
 
 
+def sincronizar_reportes(db: Session, cuestionario: Cuestionario):
+    """
+    Después de guardar el examen: cada reporte toma la posición actual de su pregunta (por `pregunta_id`);
+    se borran los de preguntas que ya no están (borradas o regeneradas). Sin commit.
+    """
+    preguntas = cuestionario.preguntas_json or []
+    posiciones = {p.get("id"): i for i, p in enumerate(preguntas) if p.get("id")}
+    lista = db.query(Reporte).filter(Reporte.cuestionario_id == cuestionario.id).all()
+    # Primero posiciones provisionales negativas: al intercambiar dos preguntas no choca la restricción única
+    for reporte in lista:
+        reporte.pregunta = -reporte.id
+    db.flush()
+    for reporte in lista:
+        if reporte.pregunta_id in posiciones:
+            reporte.pregunta = posiciones[reporte.pregunta_id]
+        else:
+            db.delete(reporte)
+    db.flush()
+
+
+def completar_ids(db: Session) -> int:
+    """Migración: a los reportes antiguos les pone el id de su pregunta si el texto sigue coincidiendo."""
+    completados = 0
+    examenes = {}
+    for reporte in db.query(Reporte).filter(Reporte.pregunta_id.is_(None)).all():
+        if reporte.cuestionario_id not in examenes:
+            examen = db.query(Cuestionario).filter(Cuestionario.id == reporte.cuestionario_id).first()
+            examenes[reporte.cuestionario_id] = (examen.preguntas_json or []) if examen else []
+        preguntas = examenes[reporte.cuestionario_id]
+        if 0 <= reporte.pregunta < len(preguntas) and preguntas[reporte.pregunta].get("pregunta") == reporte.texto_pregunta:
+            reporte.pregunta_id = preguntas[reporte.pregunta].get("id")
+            completados += 1
+    if completados:
+        db.commit()
+    return completados
+
+
 @router.post("/api/intentos/{intento_id}/reportes")
 def reportar_pregunta(intento_id: int, datos: NuevoReporte, usuario: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     intento = db.query(Intento).filter(Intento.id == intento_id).first()
@@ -73,6 +110,7 @@ def reportar_pregunta(intento_id: int, datos: NuevoReporte, usuario: Usuario = D
         raise HTTPException(status_code=400, detail="Esa pregunta no existe en el examen.")
 
     comentario = (datos.comentario or "").strip() or None
+    id_pregunta = preguntas[datos.pregunta].get("id")
     reporte = db.query(Reporte).filter(
         Reporte.estudiante_id == usuario.id,
         Reporte.cuestionario_id == cuestionario.id,
@@ -82,6 +120,7 @@ def reportar_pregunta(intento_id: int, datos: NuevoReporte, usuario: Usuario = D
         reporte = Reporte(cuestionario_id=cuestionario.id, estudiante_id=usuario.id, pregunta=datos.pregunta)
         db.add(reporte)
     reporte.intento_id = intento.id
+    reporte.pregunta_id = id_pregunta
     reporte.texto_pregunta = str(preguntas[datos.pregunta].get("pregunta", ""))
     reporte.motivo = datos.motivo
     reporte.comentario = comentario

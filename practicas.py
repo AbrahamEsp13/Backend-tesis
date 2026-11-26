@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from auth import usuario_actual
 from database import Cuestionario, Intento, Practica, Usuario, ahora_utc, get_db
 from generacion import generar_practica, agregar_fuentes, RespuestaInvalida
-from identificadores import respuestas_para_mostrar
+from identificadores import cortas_actuales, respuestas_para_mostrar
 from calificacion import es_respuesta_corta
 import configuracion
 
@@ -180,8 +180,8 @@ def crear_practica(intento_id: int, usuario: Usuario = Depends(usuario_actual), 
 
     preguntas = cuestionario.preguntas_json or []
     # Los ids guardados, traducidos a los textos actuales (4.6): se comparan con respuesta_correcta
-    respuestas, _ = respuestas_para_mostrar(preguntas, intento.respuestas)
-    falladas = preguntas_falladas(preguntas, respuestas, intento.respuestas_cortas)
+    respuestas, _ = respuestas_para_mostrar(preguntas, intento.respuestas, cortas=intento.respuestas_cortas)
+    falladas = preguntas_falladas(preguntas, respuestas, cortas_actuales(preguntas, intento.respuestas_cortas))
     if not falladas:
         raise HTTPException(status_code=400, detail="No fallaste ninguna pregunta en este intento: no hay nada que practicar.")
     if practicas_restantes(usuario.id, db) <= 0:

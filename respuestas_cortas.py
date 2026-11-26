@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from auth import docente_actual
 from calificacion import calificar, es_respuesta_corta
 from database import Cuestionario, Intento, Usuario, get_db
+from identificadores import cortas_actuales, respuestas_por_indice_actual
 
 router = APIRouter(tags=["respuestas_cortas"])
 
@@ -43,8 +44,9 @@ def corregir(preguntas: list, respuestas: dict) -> dict:
     textos = textos_cortos(preguntas, respuestas)
     resultado, por_calificar = {}, []
     for clave, texto in textos.items():
+        id_pregunta = preguntas[int(clave)].get("id")  # para seguir a la pregunta si cambia de posición
         if not texto:
-            resultado[clave] = {"texto": "", "puntaje": 0, "comentario": "No respondiste esta pregunta.", "estado": "vacia"}
+            resultado[clave] = {"texto": "", "puntaje": 0, "comentario": "No respondiste esta pregunta.", "estado": "vacia", "pregunta_id": id_pregunta}
         else:
             pregunta = preguntas[int(clave)]
             por_calificar.append({
@@ -61,10 +63,11 @@ def corregir(preguntas: list, respuestas: dict) -> dict:
         for item in por_calificar:
             clave = str(item["numero"] - 1)
             calificacion = calificadas.get(item["numero"])
+            id_pregunta = preguntas[int(clave)].get("id")
             if calificacion:
-                resultado[clave] = {"texto": item["respuesta"], **calificacion, "estado": "ia"}
+                resultado[clave] = {"texto": item["respuesta"], **calificacion, "estado": "ia", "pregunta_id": id_pregunta}
             else:
-                resultado[clave] = {"texto": item["respuesta"], "puntaje": 0, "comentario": "", "estado": "pendiente"}
+                resultado[clave] = {"texto": item["respuesta"], "puntaje": 0, "comentario": "", "estado": "pendiente", "pregunta_id": id_pregunta}
         pendientes = sum(r["estado"] == "pendiente" for r in resultado.values())
         print(f"INFO respuestas cortas: {len(por_calificar)} calificadas con IA, {pendientes} pendientes")
     return resultado
@@ -88,15 +91,20 @@ def corregir_docente(intento_id: int, indice: int, datos: CorreccionDocente,
     if not 0 <= indice < len(preguntas) or not es_respuesta_corta(preguntas[indice]):
         raise HTTPException(status_code=400, detail="Esa pregunta no es de respuesta corta.")
 
-    cortas = dict(intento.respuestas_cortas or {})
-    anterior = cortas.get(str(indice)) or {"texto": str((intento.respuestas or {}).get(str(indice)) or "")}
+    # Todo con la posición ACTUAL de cada pregunta (el docente pudo editar el examen después de la entrega)
+    cortas = cortas_actuales(preguntas, intento.respuestas_cortas)
+    respuestas = respuestas_por_indice_actual(preguntas, intento.respuestas, intento.respuestas_cortas)
+    anterior = cortas.get(str(indice)) or {"texto": str(respuestas.get(str(indice)) or "")}
     cortas[str(indice)] = {
         **anterior,
         "puntaje": datos.puntaje,
         "comentario": (datos.comentario or "").strip() if datos.comentario is not None else anterior.get("comentario", ""),
         "estado": "docente",
+        "pregunta_id": preguntas[indice].get("id"),
     }
-    resultado = calificar(preguntas, intento.respuestas or {}, cortas)
+    resultado = calificar(preguntas, respuestas, cortas)
+    # Se guarda ya con las posiciones actuales (respuestas y cortas juntas, para que sigan cuadrando)
+    intento.respuestas = respuestas
     intento.respuestas_cortas = cortas  # dict nuevo: SQLAlchemy detecta el cambio del JSON
     intento.puntos_obtenidos = resultado["puntos_obtenidos"]
     intento.puntos_totales = resultado["puntos_totales"]

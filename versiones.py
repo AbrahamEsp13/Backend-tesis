@@ -30,7 +30,25 @@ def generar_orden(preguntas: list, barajar_preguntas: bool, barajar_opciones: bo
             posiciones = list(range(len(pregunta.get("opciones") or [])))
             rng.shuffle(posiciones)
             opciones[str(i)] = posiciones
-    return {"preguntas": indices, "opciones": opciones}
+    # Ids por posición original: si el docente reordena o borra preguntas, el orden se puede reacomodar
+    return {"preguntas": indices, "opciones": opciones, "ids": [p.get("id") for p in preguntas]}
+
+
+def _reacomodar_por_ids(orden: dict, preguntas: list) -> dict:
+    """Traduce las posiciones guardadas a las actuales usando los ids de pregunta (si el orden los tiene)."""
+    ids = orden.get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        return orden  # orden antiguo o generado antes de que las preguntas tuvieran id
+    actuales = {p.get("id"): i for i, p in enumerate(preguntas) if p.get("id")}
+    nueva = {}
+    for i, id_pregunta in enumerate(ids):
+        if id_pregunta in actuales:
+            nueva[i] = actuales[id_pregunta]
+    return {
+        "preguntas": [nueva[i] for i in orden.get("preguntas") or [] if isinstance(i, int) and i in nueva],
+        "opciones": {str(nueva[int(k)]): v for k, v in (orden.get("opciones") or {}).items()
+                     if str(k).isdigit() and int(k) in nueva},
+    }
 
 
 def normalizar_orden(orden: dict | None, preguntas: list) -> dict:
@@ -39,6 +57,7 @@ def normalizar_orden(orden: dict | None, preguntas: list) -> dict:
     preguntas nuevas y usa el orden original de las opciones si su número cambió.
     """
     n = len(preguntas)
+    orden = _reacomodar_por_ids(orden or {}, preguntas)
     vistos, indices = set(), []
     for i in (orden or {}).get("preguntas") or []:
         if isinstance(i, int) and 0 <= i < n and i not in vistos:

@@ -128,6 +128,7 @@ class Reporte(Base):
     intento_id = Column(Integer, nullable=False)
     pregunta = Column(Integer, nullable=False)          # índice en preguntas_json
     texto_pregunta = Column(String, nullable=False)     # como estaba al reportarla
+    pregunta_id = Column(String, nullable=True)         # id estable de la pregunta: se reacomoda si cambia de posición
     motivo = Column(String, nullable=False)
     comentario = Column(String, nullable=True)
     fecha = Column(DateTime, default=ahora_utc)
@@ -222,6 +223,7 @@ COLUMNAS_NUEVAS = {
         "barajar_preguntas": "BOOLEAN",
         "barajar_opciones": "BOOLEAN",
     },
+    Reporte.__tablename__: {"pregunta_id": "VARCHAR"},
     Intento.__tablename__: {"seguridad": "JSON", "inicio_id": "INTEGER", "fuera_de_tiempo": "BOOLEAN", "entrega_automatica": "BOOLEAN", "en_papel": "BOOLEAN", "orden": "JSON", "respuestas_cortas": "JSON"},
     InicioIntento.__tablename__: {"borrador_respuestas": "JSON", "borrador_seguridad": "JSON", "fecha_borrador": "TIMESTAMP", "orden": "JSON"},
 }

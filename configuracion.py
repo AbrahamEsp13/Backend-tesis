@@ -273,6 +273,10 @@ def iniciar(cuestionario_id: int, usuario: Usuario = Depends(usuario_actual), db
         raise HTTPException(status_code=404, detail="Esta evaluación ya no está disponible.")
 
     entregar_vencidos(db, cuestionario_ids=[cuestionario.id], estudiante_id=usuario.id)
+    # Las preguntas necesitan ids (de opción, 4.6, y de pregunta) antes de generar el orden del intento (2.6)
+    if not identificadores.tiene_ids(cuestionario.preguntas_json):
+        cuestionario.preguntas_json = identificadores.normalizar_preguntas(cuestionario.preguntas_json)
+        db.commit()
     ahora = ahora_utc()
     inicio = inicio_en_curso(cuestionario, usuario.id, db, ahora)
     reanudado = inicio is not None
@@ -289,10 +293,6 @@ def iniciar(cuestionario_id: int, usuario: Usuario = Depends(usuario_actual), db
         db.commit()
         db.refresh(inicio)
 
-    # Las preguntas necesitan ids para entregar por opción (4.6); los exámenes antiguos se completan aquí
-    if not identificadores.tiene_ids(cuestionario.preguntas_json):
-        cuestionario.preguntas_json = identificadores.normalizar_preguntas(cuestionario.preguntas_json)
-        db.commit()
 
     return {
         "inicio_id": inicio.id,

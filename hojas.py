@@ -107,7 +107,8 @@ def registrar(cuestionario_id: int, datos: Registro, usuario: Usuario = Depends(
             raise HTTPException(status_code=400, detail=f"La pregunta {int(clave) + 1} no tiene la opción {indice + 1}.")
         respuestas[clave] = ids[indice]
     cortas = {
-        str(i): {"texto": "", "puntaje": redondear_puntaje(datos.cortas.get(str(i), 0)), "comentario": "", "estado": "docente"}
+        str(i): {"texto": "", "puntaje": redondear_puntaje(datos.cortas.get(str(i), 0)), "comentario": "", "estado": "docente",
+                 "pregunta_id": pregunta.get("id")}
         for i, pregunta in enumerate(preguntas) if es_respuesta_corta(pregunta)
     }
     resultado = calificar(preguntas, respuestas, cortas)

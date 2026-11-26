@@ -11,6 +11,9 @@ los intentos anteriores siguen apuntando a la opción que el estudiante eligió.
   cada pregunta. Así el frontend sigue comparando textos sin saber de ids.
 - Los ids son únicos dentro de un examen (se buscan en todo el examen para seguir a una pregunta
   que cambió de posición). Una respuesta a una pregunta que ya no existe deja de mostrarse.
+- Cada pregunta también tiene un id estable (`id`, "pr_..."). Lo usan lo que se guarda por pregunta
+  y no por opción: reportes (se reacomodan al guardar el examen), valoraciones, respuestas cortas
+  (`pregunta_id` en cada calificación) y el orden de las versiones (2.6).
 """
 import copy
 import secrets
@@ -18,10 +21,11 @@ import secrets
 from sqlalchemy.orm import Session
 
 PREFIJO = "op_"
+PREFIJO_PREGUNTA = "pr_"
 
 
-def nuevo_id() -> str:
-    return PREFIJO + secrets.token_hex(4)
+def nuevo_id(prefijo: str = PREFIJO) -> str:
+    return prefijo + secrets.token_hex(4)
 
 
 def _texto(valor) -> str:
@@ -35,9 +39,18 @@ def normalizar_preguntas(preguntas: list | None) -> list:
     El `id_correcta` que venga del cliente se ignora (se recalcula siempre).
     """
     usados = set()
+    ids_preguntas = set()
     resultado = []
     for original in preguntas or []:
         pregunta = dict(original)
+        # Id de la pregunta: se conserva si es válido y no se repite en el examen
+        id_pregunta = pregunta.get("id")
+        if not isinstance(id_pregunta, str) or not id_pregunta.startswith(PREFIJO_PREGUNTA) or id_pregunta in ids_preguntas:
+            id_pregunta = nuevo_id(PREFIJO_PREGUNTA)
+            while id_pregunta in ids_preguntas:
+                id_pregunta = nuevo_id(PREFIJO_PREGUNTA)
+        ids_preguntas.add(id_pregunta)
+        pregunta["id"] = id_pregunta
         opciones = pregunta.get("opciones") or []
         previos = pregunta.get("ids_opciones") if isinstance(pregunta.get("ids_opciones"), list) else []
         ids = []
@@ -59,8 +72,73 @@ def normalizar_preguntas(preguntas: list | None) -> list:
 def tiene_ids(preguntas: list | None) -> bool:
     return all(
         isinstance(p.get("ids_opciones"), list) and len(p["ids_opciones"]) == len(p.get("opciones") or []) and "id_correcta" in p
+        and str(p.get("id") or "").startswith(PREFIJO_PREGUNTA)
         for p in preguntas or []
     )
+
+
+def indices_por_id(preguntas: list | None) -> dict[str, int]:
+    """{ id de pregunta: posición actual }."""
+    return {p["id"]: i for i, p in enumerate(preguntas or []) if isinstance(p.get("id"), str)}
+
+
+def indice_de_pregunta(preguntas: list, referencia: str) -> int | None:
+    """La posición de una pregunta por su id ("pr_...") o, por compatibilidad, por su posición ("3")."""
+    if str(referencia).startswith(PREFIJO_PREGUNTA):
+        return indices_por_id(preguntas).get(referencia)
+    if str(referencia).isdigit() and int(referencia) < len(preguntas or []):
+        return int(referencia)
+    return None
+
+
+def cortas_actuales(preguntas: list, cortas: dict | None) -> dict:
+    """
+    Las respuestas cortas de un intento con la posición ACTUAL de su pregunta (por `pregunta_id`).
+    Se omiten las de preguntas borradas; las antiguas sin `pregunta_id` conservan su posición.
+    """
+    posiciones = indices_por_id(preguntas)
+    resultado = {}
+    for clave, valor in (cortas or {}).items():
+        id_pregunta = (valor or {}).get("pregunta_id")
+        if id_pregunta:
+            if id_pregunta in posiciones:
+                resultado[str(posiciones[id_pregunta])] = valor
+        elif str(clave).isdigit() and int(clave) < len(preguntas or []):
+            resultado[str(clave)] = valor
+    return resultado
+
+
+def respuestas_por_indice_actual(preguntas: list, respuestas: dict | None, cortas: dict | None = None) -> dict:
+    """
+    Como respuestas_para_mostrar, pero con los ids (para volver a calificar): { posición actual: id de opción }.
+    Los textos de las respuestas cortas se mueven con su pregunta (según `cortas`).
+    """
+    ubicacion = {}
+    for i, pregunta in enumerate(preguntas or []):
+        for id_opcion in pregunta.get("ids_opciones") or []:
+            ubicacion[id_opcion] = i
+    movimientos = _movimientos_de_cortas(preguntas, cortas)
+    resultado = {}
+    for clave, valor in (respuestas or {}).items():
+        if valor in ubicacion:
+            resultado[str(ubicacion[valor])] = valor
+        elif str(clave) in movimientos:
+            if movimientos[str(clave)] is not None:
+                resultado[movimientos[str(clave)]] = valor
+        elif not (isinstance(valor, str) and valor.startswith(PREFIJO)):
+            resultado[str(clave)] = valor
+    return resultado
+
+
+def _movimientos_de_cortas(preguntas: list, cortas: dict | None) -> dict:
+    """{ posición al entregar: posición actual (o None si la pregunta se borró) } de las respuestas cortas."""
+    posiciones = indices_por_id(preguntas)
+    movimientos = {}
+    for clave, valor in (cortas or {}).items():
+        id_pregunta = (valor or {}).get("pregunta_id")
+        if id_pregunta:
+            movimientos[str(clave)] = str(posiciones[id_pregunta]) if id_pregunta in posiciones else None
+    return movimientos
 
 
 def id_de_respuesta(pregunta: dict, valor) -> str | None:
@@ -94,7 +172,7 @@ def es_correcta(pregunta: dict, valor) -> bool:
     return valor is not None and valor == pregunta.get("respuesta_correcta")
 
 
-def respuestas_para_mostrar(preguntas: list, respuestas: dict | None, seguridad: dict | None = None) -> tuple[dict, dict]:
+def respuestas_para_mostrar(preguntas: list, respuestas: dict | None, seguridad: dict | None = None, cortas: dict | None = None) -> tuple[dict, dict]:
     """
     Traduce un intento guardado a índices y textos actuales: ({ "<índice>": texto }, { "<índice>": bool }).
     - id encontrado en el examen: el índice y el texto actuales de esa opción;
@@ -107,12 +185,18 @@ def respuestas_para_mostrar(preguntas: list, respuestas: dict | None, seguridad:
             if j < len(pregunta.get("opciones") or []):
                 ubicacion[id_opcion] = (i, j)
     seguridad = seguridad or {}
+    movimientos = _movimientos_de_cortas(preguntas, cortas)  # textos de respuestas cortas (siguen a su pregunta)
     textos, seguridad_actual = {}, {}
     for clave, valor in (respuestas or {}).items():
         if valor in ubicacion:
             i, j = ubicacion[valor]
             nueva_clave = str(i)
             textos[nueva_clave] = preguntas[i]["opciones"][j]
+        elif str(clave) in movimientos:
+            if movimientos[str(clave)] is None:
+                continue  # la pregunta se borró
+            nueva_clave = movimientos[str(clave)]
+            textos[nueva_clave] = valor
         elif isinstance(valor, str) and valor.startswith(PREFIJO):
             continue
         else:

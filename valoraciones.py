@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from auth import docente_actual, cuestionario_propio
 from database import Cuestionario, Usuario, get_db
+from identificadores import indice_de_pregunta
 
 router = APIRouter(tags=["valoraciones"])
 
@@ -71,12 +72,14 @@ def estadisticas(cuestionarios) -> dict:
     return {"total": total, "por_complejidad": por_complejidad}
 
 
-@router.put("/api/cuestionarios/{cuestionario_id}/preguntas/{indice}/valoracion")
-def valorar_pregunta(cuestionario_id: int, indice: int, datos: Valoracion, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+@router.put("/api/cuestionarios/{cuestionario_id}/preguntas/{referencia}/valoracion")
+def valorar_pregunta(cuestionario_id: int, referencia: str, datos: Valoracion, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
+    """`referencia` es el id de la pregunta ("pr_..."); por compatibilidad, también su posición."""
     cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     preguntas = [dict(p) for p in cuestionario.preguntas_json or []]
-    if not 0 <= indice < len(preguntas):
-        raise HTTPException(status_code=404, detail="Esa pregunta no existe en el examen.")
+    indice = indice_de_pregunta(preguntas, referencia)
+    if indice is None:
+        raise HTTPException(status_code=404, detail="Esa pregunta no existe en el examen (si la acabas de agregar, guarda el examen primero).")
     if datos.util is None:
         preguntas[indice].pop("valoracion", None)
         valoracion = None

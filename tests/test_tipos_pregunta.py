@@ -73,7 +73,7 @@ def test_corregir_con_la_ia_y_pendiente_si_falla(monkeypatch):
     preguntas = [CORTA, CORTA, CORTA, MULTIPLE]
     cortas = respuestas_cortas.corregir(preguntas, {"0": " atributos y métodos ", "1": "", "2": "otra cosa", "3": "a"})
     assert len(llamadas) == 1 and [i["numero"] for i in llamadas[0]] == [1, 3]  # una sola llamada; la vacía no va
-    assert cortas["0"] == {"texto": "atributos y métodos", "puntaje": 1.0, "comentario": "Bien.", "estado": "ia"}
+    assert cortas["0"] == {"texto": "atributos y métodos", "puntaje": 1.0, "comentario": "Bien.", "estado": "ia", "pregunta_id": None}
     assert cortas["1"]["estado"] == "vacia" and cortas["1"]["puntaje"] == 0
     assert cortas["2"]["estado"] == "pendiente"  # la IA no la devolvió
     assert "3" not in cortas
@@ -116,7 +116,9 @@ def test_entregar_y_corregir(cliente, examen_mixto, db):
     assert corregido.status_code == 200, corregido.text
     nuevo = corregido.json()["intento"]
     assert nuevo["puntos_obtenidos"] == 3 and nuevo["calificacion"] == 10
-    assert nuevo["respuestas_cortas"]["1"] == {"texto": "Los atributos", "puntaje": 1, "comentario": "Correcto.", "estado": "docente"}
+    corregida = nuevo["respuestas_cortas"]["1"]
+    assert corregida.pop("pregunta_id").startswith("pr_")
+    assert corregida == {"texto": "Los atributos", "puntaje": 1, "comentario": "Correcto.", "estado": "docente"}
 
     # Solo el docente dueño y solo en preguntas cortas
     assert cliente.put(ruta, headers=examen_mixto["estudiante"], json={"puntaje": 1}).status_code == 403
@@ -127,7 +129,7 @@ def test_entregar_y_corregir(cliente, examen_mixto, db):
 def test_respuestas_ocultas_no_muestran_la_correccion(cliente, examen_mixto):
     cliente.put(f"/api/cuestionarios/{examen_mixto['examen_id']}/configuracion", headers=examen_mixto["docente"], json={"mostrar_respuestas": "nunca"})
     intento = entregar(cliente, examen_mixto, {"0": "Falso", "1": "algo"})["intento"]
-    assert intento["respuestas_cortas"]["1"] == {"texto": "algo", "estado": "oculta"}
+    assert intento["respuestas_cortas"]["1"] == {"texto": "algo", "estado": "oculta"}  # sin puntaje, comentario ni ids
 
 
 def test_practica_cuenta_las_cortas_incompletas():
