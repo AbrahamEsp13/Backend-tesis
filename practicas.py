@@ -22,6 +22,7 @@ from auth import usuario_actual
 from database import Cuestionario, Intento, Practica, Usuario, ahora_utc, get_db
 from generacion import generar_practica, agregar_fuentes, RespuestaInvalida
 from identificadores import respuestas_para_mostrar
+from calificacion import es_respuesta_corta
 import configuracion
 
 router = APIRouter(tags=["practicas"])
@@ -38,9 +39,15 @@ class RespuestasPractica(BaseModel):
 
 # ---------- Lógica (sin FastAPI, para probarla directo) ----------
 
-def preguntas_falladas(preguntas: list, respuestas: dict) -> list[int]:
-    """Índices de las preguntas mal respondidas o sin responder."""
-    return [i for i, p in enumerate(preguntas) if respuestas.get(str(i)) != p.get("respuesta_correcta")]
+def preguntas_falladas(preguntas: list, respuestas: dict, cortas: dict | None = None) -> list[int]:
+    """Índices de las preguntas mal respondidas o sin responder (las cortas, si no valieron completo)."""
+    cortas = cortas or {}
+
+    def fallada(i, p):
+        if es_respuesta_corta(p):
+            return float((cortas.get(str(i)) or {}).get("puntaje") or 0) < 1
+        return respuestas.get(str(i)) != p.get("respuesta_correcta")
+    return [i for i, p in enumerate(preguntas) if fallada(i, p)]
 
 
 def numero_de_preguntas(n_falladas: int) -> int:
@@ -174,7 +181,7 @@ def crear_practica(intento_id: int, usuario: Usuario = Depends(usuario_actual), 
     preguntas = cuestionario.preguntas_json or []
     # Los ids guardados, traducidos a los textos actuales (4.6): se comparan con respuesta_correcta
     respuestas, _ = respuestas_para_mostrar(preguntas, intento.respuestas)
-    falladas = preguntas_falladas(preguntas, respuestas)
+    falladas = preguntas_falladas(preguntas, respuestas, intento.respuestas_cortas)
     if not falladas:
         raise HTTPException(status_code=400, detail="No fallaste ninguna pregunta en este intento: no hay nada que practicar.")
     if practicas_restantes(usuario.id, db) <= 0:

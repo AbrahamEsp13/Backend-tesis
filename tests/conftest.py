@@ -113,8 +113,8 @@ def ia_simulada(monkeypatch):
         "contexto": "texto del pdf", "fragmentos": fragmentos, "fragmentos_totales": 3, "fragmentos_usados": 2,
     })
 
-    def generar(contexto, num_preguntas, complejidad):
-        llamadas.append({"num_preguntas": num_preguntas, "complejidad": complejidad})
+    def generar(contexto, num_preguntas, complejidad, tipos=None):
+        llamadas.append({"num_preguntas": num_preguntas, "complejidad": complejidad, "tipos": tipos})
         # Como validar_preguntas: con los campos crudos fragmento y cita
         return [{"pregunta": "p", "opciones": ["a) x", "b) y"], "respuesta_correcta": "a) x",
                  "justificacion_pedagogica": "j", "puntuacion": 1,

@@ -207,7 +207,9 @@ def entregar_vencidos(db: Session, *, cuestionario_ids: list[int] | None = None,
             continue  # sin límite, o el navegador todavía puede entregar
         preguntas = cuestionario.preguntas_json or []
         respuestas = respuestas_a_ids(preguntas, inicio.borrador_respuestas)  # textos antiguos -> ids
-        resultado = calificar(preguntas, respuestas)
+        import respuestas_cortas  # aquí: evita un ciclo al importar
+        cortas = respuestas_cortas.corregir(preguntas, respuestas)  # 4.2
+        resultado = calificar(preguntas, respuestas, cortas)
         db.add(Intento(
             cuestionario_id=cuestionario.id,
             estudiante_id=inicio.estudiante_id,
@@ -218,6 +220,7 @@ def entregar_vencidos(db: Session, *, cuestionario_ids: list[int] | None = None,
             tiempo_segundos=max(0, int((fin - inicio.fecha_inicio).total_seconds())),
             fecha=fin,
             seguridad={k: v for k, v in (inicio.borrador_seguridad or {}).items() if k in respuestas},
+            respuestas_cortas=cortas,
             inicio_id=inicio.id,
             orden=inicio.orden,
             fuera_de_tiempo=False,  # el borrador solo se acepta mientras hay tiempo

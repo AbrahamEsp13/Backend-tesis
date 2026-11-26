@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 import clases
 from auth import docente_actual, cuestionario_propio
-from calificacion import calificar
+from calificacion import calificar, es_respuesta_corta
+from generacion import redondear_puntaje
 from database import Clase, ClaseCuestionario, ClaseEstudiante, Intento, Usuario, get_db
 from lectura_hojas import HojaIlegible, disposicion, leer_hoja
 
@@ -29,6 +30,8 @@ class Registro(BaseModel):
     estudiante_id: int
     # { "<índice de pregunta>": índice de la opción elegida, o None si la dejó en blanco }
     respuestas: dict[str, int | None] = Field(default_factory=dict)
+    # 4.2: respuestas cortas (escritas en el cuadernillo) calificadas por el docente: 0, 0.5 o 1
+    cortas: dict[str, float] = Field(default_factory=dict)
 
 
 def opciones_por_pregunta(preguntas: list) -> list[int]:
@@ -103,7 +106,11 @@ def registrar(cuestionario_id: int, datos: Registro, usuario: Usuario = Depends(
         if not 0 <= indice < len(ids):
             raise HTTPException(status_code=400, detail=f"La pregunta {int(clave) + 1} no tiene la opción {indice + 1}.")
         respuestas[clave] = ids[indice]
-    resultado = calificar(preguntas, respuestas)
+    cortas = {
+        str(i): {"texto": "", "puntaje": redondear_puntaje(datos.cortas.get(str(i), 0)), "comentario": "", "estado": "docente"}
+        for i, pregunta in enumerate(preguntas) if es_respuesta_corta(pregunta)
+    }
+    resultado = calificar(preguntas, respuestas, cortas)
     intento = Intento(
         cuestionario_id=cuestionario.id,
         estudiante_id=estudiante.id,
@@ -113,6 +120,7 @@ def registrar(cuestionario_id: int, datos: Registro, usuario: Usuario = Depends(
         calificacion=resultado["calificacion"],
         tiempo_segundos=None,
         seguridad={},
+        respuestas_cortas=cortas,
         en_papel=True,
     )
     db.add(intento)

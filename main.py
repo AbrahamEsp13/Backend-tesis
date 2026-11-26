@@ -40,13 +40,14 @@ import formatos
 import hojas
 import versiones
 import recuperacion
+import respuestas_cortas
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
 
 # --- RAG: recuperación (rag.py) y generación (generacion.py) ---
 from rag import construir_contexto, DocumentoSinTexto
-from generacion import generar_preguntas, agregar_fuentes, RespuestaInvalida, COMPLEJIDAD_PREDETERMINADA
+from generacion import generar_preguntas, agregar_fuentes, RespuestaInvalida, COMPLEJIDAD_PREDETERMINADA, tipos_validos
 
 Complejidad = Literal["basico", "equilibrado", "avanzado"]
 
@@ -123,6 +124,7 @@ app.include_router(regeneracion.router)
 app.include_router(formatos.router)
 app.include_router(hojas.router)
 app.include_router(recuperacion.router)
+app.include_router(respuestas_cortas.router)
 
 # 4.6: ids estables en las opciones de los exámenes y en las respuestas de los intentos antiguos.
 # Es idempotente; si falla, la app arranca igual (los datos sin ids se siguen calificando por texto).
@@ -179,6 +181,8 @@ def generar_cuestionario(
     nombre_examen: str = Form(...),
     materia: str = Form(...),
     complejidad: Complejidad = Form(COMPLEJIDAD_PREDETERMINADA),
+    # 4.2: tipos de pregunta separados por comas: opcion_multiple, verdadero_falso, respuesta_corta
+    tipos: str = Form("opcion_multiple"),
     usuario: Usuario = Depends(docente_actual),
     db: Session = Depends(get_db)
 ):
@@ -209,7 +213,7 @@ def generar_cuestionario(
 
     # --- 4. GENERACIÓN (Gemini) Y VALIDACIÓN ---
     try:
-        preguntas = generar_preguntas(recuperado["contexto"], num_preguntas, complejidad)
+        preguntas = generar_preguntas(recuperado["contexto"], num_preguntas, complejidad, tipos=tipos_validos(tipos.split(",")))
         preguntas = normalizar_preguntas(agregar_fuentes(preguntas, recuperado.get("fragmentos", [])))
         print(f"INFO fuentes: {sum('fuente' in p for p in preguntas)} de {len(preguntas)} preguntas con cita al documento")
     except RespuestaInvalida as e:
@@ -451,11 +455,12 @@ def preguntas_con_ids(cuestionario: Cuestionario, db: Session) -> list:
         db.commit()
     return preguntas
 
-def intento_a_dict(intento: Intento, preguntas: list) -> dict:
+def intento_a_dict(intento: Intento, preguntas: list, con_correccion: bool = True) -> dict:
     """
     Las respuestas se guardan como ids de opción; aquí se traducen al índice y al texto ACTUALES de
     cada pregunta (el frontend compara textos). Así, editar una opción o borrar una pregunta después
     de las entregas no descuadra los intentos anteriores.
+    con_correccion=False (respuestas ocultas, 4.1): de las respuestas cortas solo va lo que escribió.
     """
     respuestas, seguridad = respuestas_para_mostrar(preguntas, intento.respuestas, intento.seguridad)
     return {
@@ -472,6 +477,8 @@ def intento_a_dict(intento: Intento, preguntas: list) -> dict:
         "fuera_de_tiempo": bool(intento.fuera_de_tiempo),
         "entrega_automatica": bool(intento.entrega_automatica),
         "en_papel": bool(intento.en_papel),
+        # 4.2: { "<índice>": {texto, puntaje, comentario, estado} } de las respuestas cortas
+        "respuestas_cortas": (intento.respuestas_cortas or {}) if con_correccion else respuestas_cortas.sin_correccion(intento.respuestas_cortas),
         # 2.6: orden en que vio preguntas y opciones (None = el original), ajustado a las preguntas actuales
         "orden": versiones.normalizar_orden(intento.orden, preguntas) if intento.orden else None,
     }
@@ -503,7 +510,9 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
     respuestas = respuestas_a_ids(preguntas, datos.respuestas)
     # La seguridad solo cuenta en preguntas respondidas
     seguridad = {k: v for k, v in datos.seguridad.items() if k in respuestas}
-    resultado = calificar(preguntas, respuestas)
+    # 4.2: las respuestas cortas se califican con la IA (una sola llamada por entrega)
+    cortas = respuestas_cortas.corregir(preguntas, respuestas)
+    resultado = calificar(preguntas, respuestas, cortas)
 
     intento = Intento(
         cuestionario_id=cuestionario.id,
@@ -515,6 +524,7 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
         # Medido en el servidor cuando hay inicio; si no, el que informa el navegador
         tiempo_segundos=tiempo_servidor if tiempo_servidor is not None else datos.tiempo_segundos,
         seguridad=seguridad,
+        respuestas_cortas=cortas,
         inicio_id=inicio.id if inicio else None,
         orden=inicio.orden if inicio else None,  # 2.6: la revisión lo muestra en el orden en que lo vio
         fuera_de_tiempo=fuera_de_tiempo,
@@ -532,7 +542,7 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
 
     visibles = configuracion.respuestas_visibles(cuestionario, ahora)
     return {
-        "intento": intento_a_dict(intento, preguntas),
+        "intento": intento_a_dict(intento, preguntas, con_correccion=visibles),
         # Si el docente no muestra las respuestas (todavía), solo va la calificación
         "respuestas_visibles": visibles,
         "respuestas_correctas": resultado["respuestas_correctas"] if visibles else None,
@@ -553,7 +563,8 @@ def mis_intentos(usuario: Usuario = Depends(usuario_actual), db: Session = Depen
         .filter(Intento.estudiante_id == usuario.id) \
         .order_by(Intento.fecha.desc()).all()
     return {"data": [
-        {**intento_a_dict(intento, cuestionario.preguntas_json or []),
+        {**intento_a_dict(intento, cuestionario.preguntas_json or [],
+                          con_correccion=configuracion.respuestas_visibles(cuestionario, ahora_utc())),
          "nombre_examen": cuestionario.nombre_examen or cuestionario.nombre_documento, "materia": cuestionario.materia}
         for intento, cuestionario in filas
     ]}
@@ -579,7 +590,7 @@ def revisar_intento(intento_id: int, usuario: Usuario = Depends(usuario_actual),
     else:
         preguntas_mostradas = ocultar_respuestas(cuestionario.preguntas_json or [])
     return {
-        "intento": intento_a_dict(intento, cuestionario.preguntas_json or []),
+        "intento": intento_a_dict(intento, cuestionario.preguntas_json or [], con_correccion=visibles),
         "examen": {
             "id": cuestionario.id,
             "nombre_examen": cuestionario.nombre_examen or cuestionario.nombre_documento,

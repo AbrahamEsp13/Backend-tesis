@@ -97,6 +97,7 @@ class Intento(Base):
     entrega_automatica = Column(Boolean, nullable=True)   # la entregó el servidor con el borrador al vencer el tiempo
     en_papel = Column(Boolean, nullable=True)             # hoja de respuestas impresa, calificada con foto (4.10)
     orden = Column(JSON, nullable=True)                   # orden en que vio preguntas y opciones (2.6, versiones.py)
+    respuestas_cortas = Column(JSON, nullable=True)       # 4.2: calificación de las respuestas cortas (respuestas_cortas.py)
 
 class InicioIntento(Base):
     """
@@ -221,7 +222,7 @@ COLUMNAS_NUEVAS = {
         "barajar_preguntas": "BOOLEAN",
         "barajar_opciones": "BOOLEAN",
     },
-    Intento.__tablename__: {"seguridad": "JSON", "inicio_id": "INTEGER", "fuera_de_tiempo": "BOOLEAN", "entrega_automatica": "BOOLEAN", "en_papel": "BOOLEAN", "orden": "JSON"},
+    Intento.__tablename__: {"seguridad": "JSON", "inicio_id": "INTEGER", "fuera_de_tiempo": "BOOLEAN", "entrega_automatica": "BOOLEAN", "en_papel": "BOOLEAN", "orden": "JSON", "respuestas_cortas": "JSON"},
     InicioIntento.__tablename__: {"borrador_respuestas": "JSON", "borrador_seguridad": "JSON", "fecha_borrador": "TIMESTAMP", "orden": "JSON"},
 }
 

@@ -66,7 +66,7 @@ def test_generacion_usa_la_complejidad_y_la_guarda(cliente, registrar, ia_simula
     respuesta = generar(cliente, docente, complejidad="basico")
     assert respuesta.status_code == 200
     assert respuesta.json()["creditos_disponibles"] == 4
-    assert ia_simulada[-1] == {"num_preguntas": 3, "complejidad": "basico"}
+    assert ia_simulada[-1] == {"num_preguntas": 3, "complejidad": "basico", "tipos": ["opcion_multiple"]}  # sin tipos: opción múltiple
     examen = cliente.get("/api/cuestionarios", headers=docente).json()["data"][0]
     assert examen["complejidad"] == "basico"
 

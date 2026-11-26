@@ -65,6 +65,7 @@ El archivo `.env` está en `.gitignore`: no se sube al repositorio.
 | `hojas.py` | Calificar con foto: estudiantes del examen, leer la foto y registrar el intento en papel. |
 | `versiones.py` | Versiones del examen: orden de preguntas y opciones por intento. |
 | `recuperacion.py`, `correo.py` | Recuperar la contraseña por correo (enlace de un solo uso, 30 min) y envío por SMTP. |
+| `respuestas_cortas.py` | Respuestas cortas (4.2): calificación con IA al entregar y corrección del docente. |
 | `practicas.py` | Práctica adaptativa: preguntas nuevas, sin calificación, con los fragmentos de lo que el estudiante falló (límite diario propio). |
 | `resumen_docente.py` | Resumen para el inicio del docente: entregas recientes, pendientes y promedio por clase. |
 | `valoraciones.py` | Calidad del generador: el docente valora cada pregunta generada; estadísticas por complejidad. |
@@ -105,6 +106,7 @@ La referencia completa e interactiva está en `/docs` con el servidor en marcha.
 | Regenerar pregunta | `POST /api/cuestionarios/{id}/regenerar-pregunta` (docente; recibe la pregunta del editor, devuelve la propuesta sin guardar) |
 | Formatos de impresión | `GET/POST /api/formatos`, `PUT/DELETE /api/formatos/{id}`, `POST /api/formatos/{id}/duplicar` (docente) |
 | Calificar con foto | `GET /api/cuestionarios/{id}/hojas/estudiantes`, `POST .../hojas/leer` (foto; no guarda), `POST .../hojas/registrar` (docente) |
+| Respuestas cortas | `PUT /api/intentos/{id}/respuestas-cortas/{indice}` (docente: puntaje 0, 0.5 o 1); al generar, `tipos` (opcion_multiple, verdadero_falso, respuesta_corta) |
 | Práctica adaptativa | `POST /api/intentos/{id}/practica` (estudiante, con los errores de ese intento), `GET /api/practicas/{id}`, `PUT /api/practicas/{id}/respuestas`, `GET /api/practicas/cupo`; el docente recibe el conteo en `GET .../intentos` |
 | Calidad del generador | `PUT /api/cuestionarios/{id}/preguntas/{i}/valoracion`, `GET /api/estadisticas/generador` |
 | Clases | `GET/POST /api/clases`, `GET/PUT/DELETE /api/clases/{id}`, `PUT .../codigo`, `POST/DELETE .../cuestionarios/{cid}`, `DELETE .../estudiantes/{eid}`, `POST /api/clases/unirse`, `DELETE .../salir` |

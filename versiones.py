@@ -11,7 +11,7 @@
 """
 import random
 
-from calificacion import ocultar_respuestas
+from calificacion import OPCION_MULTIPLE, ocultar_respuestas, tipo_de
 
 
 def generar_orden(preguntas: list, barajar_preguntas: bool, barajar_opciones: bool, rng: random.Random | None = None) -> dict | None:
@@ -25,6 +25,8 @@ def generar_orden(preguntas: list, barajar_preguntas: bool, barajar_opciones: bo
     opciones = {}
     if barajar_opciones:
         for i, pregunta in enumerate(preguntas):
+            if tipo_de(pregunta) != OPCION_MULTIPLE:
+                continue  # 4.2: "Verdadero / Falso" no se baraja; las cortas no tienen opciones
             posiciones = list(range(len(pregunta.get("opciones") or [])))
             rng.shuffle(posiciones)
             opciones[str(i)] = posiciones

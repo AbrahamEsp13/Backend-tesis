@@ -38,6 +38,7 @@ INDICACIONES_MOTIVO = {
 
 class PreguntaEditor(BaseModel):
     """La pregunta tal como está en el editor (puede tener cambios sin guardar)."""
+    tipo: str | None = None  # 4.2: la nueva es del mismo tipo
     pregunta: str = Field(max_length=4000)
     opciones: list[str] = Field(default_factory=list, max_length=10)
     respuesta_correcta: str | None = None
@@ -86,6 +87,7 @@ def regenerar(cuestionario_id: int, datos: Regeneracion, usuario: Usuario = Depe
         f"Indicación del docente: {datos.indicaciones.strip()}" if datos.indicaciones and datos.indicaciones.strip() else None,
     ]))
     original = {
+        "tipo": datos.pregunta.tipo,
         "pregunta": datos.pregunta.pregunta,
         "opciones": datos.pregunta.opciones,
         "respuesta_correcta": datos.pregunta.respuesta_correcta,
