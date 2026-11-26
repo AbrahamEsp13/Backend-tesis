@@ -2,11 +2,13 @@
 
 El estudiante nunca recibe las respuestas correctas antes de entregar: el backend
 califica con las preguntas guardadas y solo entonces devuelve la corrección.
+Las respuestas son ids de opción (ver identificadores.py), no textos.
 """
+from identificadores import es_correcta
 
 # Campos que el estudiante no debe ver mientras resuelve el examen
 # (la valoración del docente no es secreta, pero no le sirve al estudiante)
-CAMPOS_PRIVADOS = ("respuesta_correcta", "justificacion_pedagogica", "fuente", "valoracion")
+CAMPOS_PRIVADOS = ("respuesta_correcta", "id_correcta", "justificacion_pedagogica", "fuente", "valoracion")
 
 
 def puntos_de_pregunta(pregunta: dict) -> float:
@@ -29,7 +31,8 @@ def ocultar_respuestas(preguntas: list) -> list:
 def calificar(preguntas: list, respuestas: dict) -> dict:
     """
     Califica un intento.
-    `respuestas` es { "<índice de pregunta>": "<opción elegida>" } (las claves llegan como texto en JSON).
+    `respuestas` es { "<índice de pregunta>": "<id de la opción elegida>" } (las claves llegan como texto en JSON).
+    En preguntas antiguas sin ids se compara el texto (ver identificadores.es_correcta).
     """
     obtenido = 0.0
     total = 0.0
@@ -43,7 +46,7 @@ def calificar(preguntas: list, respuestas: dict) -> dict:
         respuestas_correctas.append(correcta)
         justificaciones.append(pregunta.get("justificacion_pedagogica") or "")
         fuentes.append(pregunta.get("fuente"))
-        if respuestas.get(str(indice)) == correcta:
+        if es_correcta(pregunta, respuestas.get(str(indice))):
             obtenido += puntos
 
     calificacion = round(obtenido / total * 10, 2) if total > 0 else 0.0

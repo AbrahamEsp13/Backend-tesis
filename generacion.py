@@ -6,7 +6,10 @@
   o con el texto sin la letra, se corrige; si no se puede, la pregunta se descarta.
 - Cada pregunta indica de qué fragmento del contexto salió y una cita textual. `agregar_fuentes`
   comprueba que la cita exista en el documento y guarda `fuente: {texto, pagina, pagina_fin, literal}`,
-  que el estudiante ve después de entregar ("Revisa esto en tu material").
+  que el estudiante ve después de entregar ("Revisa esto en tu material"). Si la cita es literal,
+  la fuente guarda además el `fragmento` completo: la práctica adaptativa (2.3) lo usa como contexto.
+- `generar_practica` crea preguntas nuevas solo con los fragmentos de las preguntas que el
+  estudiante falló (práctica sin calificación).
 """
 import json
 import os
@@ -169,7 +172,8 @@ def buscar_fuente(numero, cita: str, fragmentos: list[dict]) -> dict | None:
         candidatos = ([indicado] if indicado else []) + [f for f in fragmentos if f is not indicado]
         for fragmento in candidatos:
             if buscada in _comparable(fragmento["texto"]):
-                return {"texto": cita, "pagina": fragmento["pagina"], "pagina_fin": fragmento["pagina_fin"], "literal": True}
+                return {"texto": cita, "pagina": fragmento["pagina"], "pagina_fin": fragmento["pagina_fin"], "literal": True,
+                        "fragmento": fragmento["texto"]}
     if indicado:
         return {"texto": indicado["texto"], "pagina": indicado["pagina"], "pagina_fin": indicado["pagina_fin"], "literal": False}
     return None
@@ -187,14 +191,76 @@ def agregar_fuentes(preguntas: list[dict], fragmentos: list[dict]) -> list[dict]
     return resultado
 
 
-def generar_preguntas(contexto: str, num_preguntas: int, complejidad: str = COMPLEJIDAD_PREDETERMINADA) -> list[dict]:
+def construir_prompt_practica(contexto: str, num_preguntas: int, errores: list[dict]) -> str:
+    """
+    Prompt de la práctica adaptativa. `errores` = [{pregunta, respuesta_correcta, elegida}]:
+    lo que el estudiante falló, para que las preguntas nuevas apunten a esos conceptos.
+    """
+    lista_errores = "\n".join(
+        f"- Pregunta: {e['pregunta']}\n  Respuesta correcta: {e['respuesta_correcta']}\n"
+        f"  El estudiante eligió: {e.get('elegida') or '(no respondió)'}"
+        for e in errores
+    )
+    return f"""Eres un profesor experto en pedagogía. Un estudiante acaba de fallar estas preguntas de una evaluación:
+
+{lista_errores}
+
+Genera exactamente {num_preguntas} preguntas NUEVAS de opción múltiple para que practique esos mismos conceptos,
+basadas ÚNICAMENTE en el contexto proporcionado. No inventes información.
+- No repitas las preguntas anteriores: pregunta lo mismo desde otro ángulo (definición, ejemplo, aplicación, contraste).
+- Incluye como distractores los errores que cometió el estudiante cuando tenga sentido, para que aprenda a distinguirlos.
+- Reparte las preguntas entre los fragmentos del contexto.
+- Redacción clara; dificultad intermedia.
+
+Reglas para cada pregunta:
+- "opciones": exactamente 4 opciones con el formato "a) ...", "b) ...", "c) ...", "d) ...".
+- "respuesta_correcta": copia EXACTA, carácter por carácter, de una de las 4 opciones (incluida la letra).
+- "justificacion_pedagogica": explica por qué es correcta y en qué se equivoca quien elige los distractores, basada en el texto.
+- "fragmento": el número N del [Fragmento N] del que sale la pregunta.
+- "cita": una o dos oraciones copiadas TEXTUALMENTE de ese fragmento (sin cambiar ni una palabra) que respaldan la respuesta correcta.
+
+Contexto:
+{contexto}
+"""
+
+
+def construir_prompt_regeneracion(contexto: str, original: dict, complejidad: str, indicaciones: str = "") -> str:
+    """Prompt para reemplazar UNA pregunta por otra sobre el mismo fragmento (4.3)."""
+    nivel = COMPLEJIDADES.get(complejidad, COMPLEJIDADES[COMPLEJIDAD_PREDETERMINADA])
+    opciones = "\n".join(f"  {op}" for op in original.get("opciones") or [])
+    return f"""Eres un profesor experto en pedagogía. Un docente quiere reemplazar esta pregunta de su evaluación:
+
+Pregunta anterior: {original.get('pregunta')}
+Opciones:
+{opciones}
+Respuesta marcada como correcta: {original.get('respuesta_correcta')}
+
+Genera exactamente 1 pregunta NUEVA de opción múltiple sobre el mismo contenido, basada ÚNICAMENTE en el contexto.
+No inventes información y no repitas la pregunta anterior ni sus opciones.
+{nivel}
+{indicaciones}
+
+Reglas:
+- "opciones": exactamente 4 opciones con el formato "a) ...", "b) ...", "c) ...", "d) ...".
+- "respuesta_correcta": copia EXACTA, carácter por carácter, de una de las 4 opciones (incluida la letra).
+- "justificacion_pedagogica": por qué es correcta, basada en el texto.
+- "fragmento": 1.
+- "cita": una o dos oraciones copiadas TEXTUALMENTE del fragmento (sin cambiar ni una palabra) que respaldan la respuesta correcta.
+
+Contexto:
+{contexto}
+"""
+
+
+def _generar(prompt: str, num_preguntas: int, temperatura: float = 0.2) -> list[dict]:
+    """Llama a Gemini con el esquema de pregunta y valida la salida."""
     respuesta = _cliente.models.generate_content(
         model=MODELO,
-        contents=construir_prompt(contexto, num_preguntas, complejidad),
+        contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=list[PreguntaIA],
-            temperature=0.2,
+            temperature=temperatura,
         ),
     )
     try:
@@ -202,3 +268,17 @@ def generar_preguntas(contexto: str, num_preguntas: int, complejidad: str = COMP
     except (TypeError, ValueError):
         raise RespuestaInvalida("La IA devolvió una respuesta con formato inválido. Intenta de nuevo.")
     return validar_preguntas(datos, num_preguntas)
+
+
+def generar_preguntas(contexto: str, num_preguntas: int, complejidad: str = COMPLEJIDAD_PREDETERMINADA) -> list[dict]:
+    return _generar(construir_prompt(contexto, num_preguntas, complejidad), num_preguntas)
+
+
+def regenerar_pregunta(contexto: str, original: dict, complejidad: str, indicaciones: str = "") -> list[dict]:
+    # Temperatura alta: el docente pidió una pregunta distinta
+    return _generar(construir_prompt_regeneracion(contexto, original, complejidad, indicaciones), 1, temperatura=0.7)
+
+
+def generar_practica(contexto: str, num_preguntas: int, errores: list[dict]) -> list[dict]:
+    # Más temperatura que el examen: dos prácticas del mismo intento no deben salir iguales
+    return _generar(construir_prompt_practica(contexto, num_preguntas, errores), num_preguntas, temperatura=0.6)

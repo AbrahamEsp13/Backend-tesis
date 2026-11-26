@@ -54,6 +54,14 @@ El archivo `.env` está en `.gitignore`: no se sube al repositorio.
 | `main.py` | Aplicación FastAPI: autenticación, cuestionarios, generación, intentos, comunidad y cuenta. |
 | `clases.py` | Endpoints de clases (`/api/clases`) y reglas de visibilidad para estudiantes. |
 | `reportes.py` | Reportes de preguntas problemáticas hechos por los estudiantes. |
+| `identificadores.py` | Ids estables de las opciones: calificación por id, traducción de intentos al texto actual y migración al arrancar. |
+| `configuracion.py` | Configuración del examen (fecha y tiempo límite, intentos, respuestas visibles) e inicio de intentos medido en el servidor. |
+| `regeneracion.py` | Regenerar una sola pregunta desde el editor con el fragmento de origen (cupo diario propio). |
+| `formatos.py` | Formatos de impresión del docente (membrete con dos logos, datos de la escuela, campos del alumno). |
+| `lectura_hojas.py` | Lectura de la hoja de respuestas en una foto (OpenCV): marcas, perspectiva y relleno de cada círculo. |
+| `hojas.py` | Calificar con foto: estudiantes del examen, leer la foto y registrar el intento en papel. |
+| `versiones.py` | Versiones del examen: orden de preguntas y opciones por intento. |
+| `practicas.py` | Práctica adaptativa: preguntas nuevas, sin calificación, con los fragmentos de lo que el estudiante falló (límite diario propio). |
 | `resumen_docente.py` | Resumen para el inicio del docente: entregas recientes, pendientes y promedio por clase. |
 | `valoraciones.py` | Calidad del generador: el docente valora cada pregunta generada; estadísticas por complejidad. |
 | `auth.py` | Tokens JWT y dependencias `usuario_actual` / `docente_actual`. |
@@ -89,6 +97,11 @@ La referencia completa e interactiva está en `/docs` con el servidor en marcha.
 | Cuestionarios | `GET /api/cuestionarios`, `PUT/DELETE /api/cuestionarios/{id}`, `PUT .../publicar` (con `clases` opcional: publica y asigna), `GET .../clases`, `PUT .../despublicar`, `.../compartir`, `POST .../clonar` |
 | Intentos | `POST /api/cuestionarios/{id}/intentos` (estudiante; devuelve clave y retroalimentación), `GET /api/cuestionarios/{id}/intentos` (docente), `GET /api/intentos/mios` (estudiante), `GET /api/intentos/{id}` (revisión: el estudiante autor o el docente dueño) |
 | Reportes | `POST /api/intentos/{id}/reportes` (estudiante), `DELETE /api/cuestionarios/{id}/reportes/{rid}` (docente); el docente los recibe en `GET .../intentos` |
+| Configuración e inicio | `PUT /api/cuestionarios/{id}/configuracion` (docente), `POST /api/cuestionarios/{id}/inicio` (estudiante; devuelve el tiempo restante y, al retomar, el borrador), `PUT /api/inicios/{id}/borrador` (respuestas en curso); la entrega recibe `inicio_id` |
+| Regenerar pregunta | `POST /api/cuestionarios/{id}/regenerar-pregunta` (docente; recibe la pregunta del editor, devuelve la propuesta sin guardar) |
+| Formatos de impresión | `GET/POST /api/formatos`, `PUT/DELETE /api/formatos/{id}`, `POST /api/formatos/{id}/duplicar` (docente) |
+| Calificar con foto | `GET /api/cuestionarios/{id}/hojas/estudiantes`, `POST .../hojas/leer` (foto; no guarda), `POST .../hojas/registrar` (docente) |
+| Práctica adaptativa | `POST /api/intentos/{id}/practica` (estudiante, con los errores de ese intento), `GET /api/practicas/{id}`, `PUT /api/practicas/{id}/respuestas`, `GET /api/practicas/cupo`; el docente recibe el conteo en `GET .../intentos` |
 | Calidad del generador | `PUT /api/cuestionarios/{id}/preguntas/{i}/valoracion`, `GET /api/estadisticas/generador` |
 | Clases | `GET/POST /api/clases`, `GET/PUT/DELETE /api/clases/{id}`, `PUT .../codigo`, `POST/DELETE .../cuestionarios/{cid}`, `DELETE .../estudiantes/{eid}`, `POST /api/clases/unirse`, `DELETE .../salir` |
 | Comunidad | `GET /api/comunidad/cuestionarios` |

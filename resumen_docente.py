@@ -14,6 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import docente_actual
+import configuracion
 from database import Clase, ClaseCuestionario, ClaseEstudiante, Cuestionario, Intento, Reporte, Usuario, get_db
 
 router = APIRouter(tags=["inicio"])
@@ -66,6 +67,7 @@ def resumen_docente(usuario: Usuario = Depends(docente_actual), db: Session = De
         .order_by(Cuestionario.id.desc()).all()
     por_id = {c.id: c for c in cuestionarios}
     ids = list(por_id)
+    configuracion.entregar_vencidos(db, cuestionario_ids=ids)  # que aparezcan las entregas automáticas
 
     entregas = []
     asignados: set[int] = set()

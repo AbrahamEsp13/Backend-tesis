@@ -11,3 +11,4 @@ pypdf
 chromadb
 google-genai
 PyJWT>=2.8,<3
+opencv-python-headless>=4.9,<5

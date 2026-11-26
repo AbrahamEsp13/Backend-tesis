@@ -36,12 +36,15 @@ def test_fragmentos_conservan_su_posicion():
 
 def test_cita_textual_en_el_fragmento_indicado():
     fuente = generacion.buscar_fuente(2, "oculta el estado interno de un objeto", FRAGMENTOS)
-    assert fuente == {"texto": "oculta el estado interno de un objeto", "pagina": 3, "pagina_fin": 4, "literal": True}
+    # Con cita literal se guarda además el fragmento completo (contexto de la práctica adaptativa)
+    assert fuente == {"texto": "oculta el estado interno de un objeto", "pagina": 3, "pagina_fin": 4, "literal": True,
+                      "fragmento": FRAGMENTOS[1]["texto"]}
 
 
 def test_cita_en_otro_fragmento_usa_las_paginas_correctas():
     fuente = generacion.buscar_fuente(2, "«permite que una clase reutilice el código»", FRAGMENTOS)
-    assert fuente == {"texto": "permite que una clase reutilice el código", "pagina": 2, "pagina_fin": 2, "literal": True}
+    assert fuente == {"texto": "permite que una clase reutilice el código", "pagina": 2, "pagina_fin": 2, "literal": True,
+                      "fragmento": FRAGMENTOS[0]["texto"]}
 
 
 def test_cita_inventada_usa_el_fragmento_completo():
@@ -76,7 +79,8 @@ def test_la_generacion_guarda_la_fuente(cliente, registrar, ia_simulada):
                              data={"num_preguntas": 1, "nombre_examen": "Parcial", "materia": "POO"})
     assert respuesta.status_code == 200
     pregunta = cliente.get("/api/cuestionarios", headers=docente).json()["data"][0]["preguntas_json"][0]
-    assert pregunta["fuente"] == {"texto": "define los atributos y métodos", "pagina": 4, "pagina_fin": 5, "literal": True}
+    assert pregunta["fuente"] == {"texto": "define los atributos y métodos", "pagina": 4, "pagina_fin": 5, "literal": True,
+                                  "fragmento": "Una clase define los atributos y métodos de sus objetos."}
     assert "fragmento" not in pregunta and "cita" not in pregunta
 
 

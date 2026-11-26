@@ -21,16 +21,24 @@ for flujo in (sys.stdout, sys.stderr):
 
 # --- IMPORTACIONES DE BASE DE DATOS ---
 from sqlalchemy.orm import Session
-from database import Cuestionario, Usuario, Intento, get_db
+from database import Cuestionario, Usuario, Intento, InicioIntento, ahora_utc, get_db
 
 # --- CALIFICACIÓN EN EL SERVIDOR ---
 from calificacion import calificar, ocultar_respuestas
+import identificadores
+from identificadores import normalizar_preguntas, respuestas_a_ids, respuestas_para_mostrar
 
 # --- CLASES (grupos) ---
 import clases
 import reportes
 import valoraciones
 import resumen_docente
+import practicas
+import configuracion
+import regeneracion
+import formatos
+import hojas
+import versiones
 
 # --- AUTENTICACIÓN (JWT) ---
 from auth import crear_token, usuario_actual, docente_actual, exigir_mismo_usuario, cuestionario_propio
@@ -67,10 +75,13 @@ class ConfirmarPassword(BaseModel):
     password: str
 
 class EntregaIntento(BaseModel):
-    respuestas: dict[str, str]   # { "<índice de pregunta>": "<opción elegida>" }
+    # { "<índice de pregunta>": "<id de la opción elegida>" } (se acepta el texto de la opción por compatibilidad)
+    respuestas: dict[str, str]
     tiempo_segundos: int | None = Field(default=None, ge=0)
     # Opcional, no cambia la calificación: { "<índice>": true = seguro, false = adivinando }
     seguridad: dict[str, bool] = Field(default_factory=dict)
+    # Inicio registrado con POST .../inicio (4.1): el servidor mide el tiempo desde ahí
+    inicio_id: int | None = None
 
 class Preferencias(BaseModel):
     complejidad_preferida: Complejidad
@@ -105,6 +116,28 @@ app.include_router(clases.router)
 app.include_router(reportes.router)
 app.include_router(valoraciones.router)
 app.include_router(resumen_docente.router)
+app.include_router(practicas.router)
+app.include_router(configuracion.router)
+app.include_router(regeneracion.router)
+app.include_router(formatos.router)
+app.include_router(hojas.router)
+
+# 4.6: ids estables en las opciones de los exámenes y en las respuestas de los intentos antiguos.
+# Es idempotente; si falla, la app arranca igual (los datos sin ids se siguen calificando por texto).
+def migrar_identificadores():
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        cambios = identificadores.migrar(db)
+        if cambios["cuestionarios"] or cambios["intentos"]:
+            print(f"[migracion] Ids de opciones: {cambios['cuestionarios']} cuestionarios, {cambios['intentos']} intentos")
+    except Exception as e:
+        db.rollback()
+        print(f"AVISO: no se pudieron migrar los ids de opciones: {e}")
+    finally:
+        db.close()
+
+migrar_identificadores()
 
 CREDITOS_DIARIOS = 5
 
@@ -113,6 +146,7 @@ def regenerar_creditos(usuario: Usuario, db: Session):
     hoy = datetime.date.today()
     if usuario.fecha_ultimo_uso is None or usuario.fecha_ultimo_uso < hoy:
         usuario.creditos_disponibles = CREDITOS_DIARIOS
+        usuario.regeneraciones_usadas = 0
         usuario.fecha_ultimo_uso = hoy
         db.commit()
 
@@ -124,6 +158,7 @@ def usuario_a_dict(usuario: Usuario) -> dict:
         "correo": usuario.correo,
         "rol": usuario.rol,
         "creditos_disponibles": usuario.creditos_disponibles,
+        "regeneraciones_restantes": regeneracion.regeneraciones_restantes(usuario),
         "foto_perfil": usuario.foto_perfil,
         "biografia": usuario.biografia,
         "institucion": usuario.institucion,
@@ -173,7 +208,7 @@ def generar_cuestionario(
     # --- 4. GENERACIÓN (Gemini) Y VALIDACIÓN ---
     try:
         preguntas = generar_preguntas(recuperado["contexto"], num_preguntas, complejidad)
-        preguntas = agregar_fuentes(preguntas, recuperado.get("fragmentos", []))
+        preguntas = normalizar_preguntas(agregar_fuentes(preguntas, recuperado.get("fragmentos", [])))
         print(f"INFO fuentes: {sum('fuente' in p for p in preguntas)} de {len(preguntas)} preguntas con cita al documento")
     except RespuestaInvalida as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -296,12 +331,17 @@ def eliminar_cuenta(usuario_id: int, datos: ConfirmarPassword, usuario: Usuario 
             if ids:
                 db.query(Intento).filter(Intento.cuestionario_id.in_(ids)).delete(synchronize_session=False)
                 reportes.borrar_reportes(db, cuestionario_ids=ids)
+                practicas.borrar_practicas(db, cuestionario_ids=ids)
+                configuracion.borrar_inicios(db, cuestionario_ids=ids)
                 clases.borrar_asignaciones_de_cuestionarios(ids, db)
                 db.query(Cuestionario).filter(Cuestionario.id.in_(ids)).delete(synchronize_session=False)
             clases.borrar_clases_de_docente(usuario.id, db)
+            formatos.borrar_formatos(db, usuario.id)
         else:
             db.query(Intento).filter(Intento.estudiante_id == usuario.id).delete(synchronize_session=False)
             reportes.borrar_reportes(db, estudiante_id=usuario.id)
+            practicas.borrar_practicas(db, estudiante_id=usuario.id)
+            configuracion.borrar_inicios(db, estudiante_id=usuario.id)
             clases.borrar_membresias_de_estudiante(usuario.id, db)
         db.delete(usuario)
         db.commit()
@@ -325,8 +365,12 @@ def obtener_historial(usuario: Usuario = Depends(usuario_actual), db: Session = 
     try:
         if usuario.rol == 'estudiante':
             # El estudiante no recibe la clave ni la justificación: la corrección llega al entregar
+            configuracion.entregar_vencidos(db, estudiante_id=usuario.id)
+            ahora = ahora_utc()
             historial = [
-                {**cuestionario_para_estudiante(c), "clases": nombres_clases}
+                {**cuestionario_para_estudiante(c), "clases": nombres_clases,
+                 # Intentos, cierre y si puede iniciar (4.1)
+                 "mi_estado": configuracion.estado_estudiante(c, usuario.id, db, ahora)}
                 for c, nombres_clases in clases.cuestionarios_visibles(usuario.id, db)
             ]
         else:
@@ -363,6 +407,8 @@ def eliminar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docen
     cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
     db.query(Intento).filter(Intento.cuestionario_id == cuestionario.id).delete()
     reportes.borrar_reportes(db, cuestionario_ids=[cuestionario.id])
+    practicas.borrar_practicas(db, cuestionario_ids=[cuestionario.id])
+    configuracion.borrar_inicios(db, cuestionario_ids=[cuestionario.id])
     clases.borrar_asignaciones_de_cuestionarios([cuestionario.id], db)
     db.delete(cuestionario)
     db.commit()
@@ -371,9 +417,11 @@ def eliminar_cuestionario(cuestionario_id: int, usuario: Usuario = Depends(docen
 @app.put("/api/cuestionarios/{id}")
 def actualizar_cuestionario(id: int, datos: ActualizarCuestionario, usuario: Usuario = Depends(docente_actual), db: Session = Depends(get_db)):
     cuestionario = cuestionario_propio(id, usuario, db)
-    cuestionario.preguntas_json = datos.preguntas_json
+    # Conserva los ids de las opciones y recalcula id_correcta (4.6)
+    cuestionario.preguntas_json = normalizar_preguntas(datos.preguntas_json)
     db.commit()
-    return {"mensaje": "Cuestionario actualizado correctamente"}
+    # Se devuelven las preguntas con sus ids: el editor las adopta para que un segundo guardado no los cambie
+    return {"mensaje": "Cuestionario actualizado correctamente", "preguntas_json": cuestionario.preguntas_json}
 
 
 # ==========================================================
@@ -389,20 +437,40 @@ def cuestionario_para_estudiante(cuestionario: Cuestionario) -> dict:
         "publicado": cuestionario.publicado,
         "fecha_creacion": cuestionario.fecha_creacion,
         "preguntas_json": ocultar_respuestas(cuestionario.preguntas_json or []),
+        "configuracion": configuracion.configuracion_a_dict(cuestionario),
     }
 
-def intento_a_dict(intento: Intento) -> dict:
+def preguntas_con_ids(cuestionario: Cuestionario, db: Session) -> list:
+    """Las preguntas del examen; si alguna no tiene ids (datos antiguos), se los asigna y guarda."""
+    preguntas = cuestionario.preguntas_json or []
+    if not identificadores.tiene_ids(preguntas):
+        cuestionario.preguntas_json = preguntas = normalizar_preguntas(preguntas)
+        db.commit()
+    return preguntas
+
+def intento_a_dict(intento: Intento, preguntas: list) -> dict:
+    """
+    Las respuestas se guardan como ids de opción; aquí se traducen al índice y al texto ACTUALES de
+    cada pregunta (el frontend compara textos). Así, editar una opción o borrar una pregunta después
+    de las entregas no descuadra los intentos anteriores.
+    """
+    respuestas, seguridad = respuestas_para_mostrar(preguntas, intento.respuestas, intento.seguridad)
     return {
         "id": intento.id,
         "cuestionario_id": intento.cuestionario_id,
         "estudiante_id": intento.estudiante_id,
-        "respuestas": intento.respuestas,
+        "respuestas": respuestas,
         "puntos_obtenidos": intento.puntos_obtenidos,
         "puntos_totales": intento.puntos_totales,
         "calificacion": intento.calificacion,
         "tiempo_segundos": intento.tiempo_segundos,
         "fecha": intento.fecha,
-        "seguridad": intento.seguridad or {},
+        "seguridad": seguridad,
+        "fuera_de_tiempo": bool(intento.fuera_de_tiempo),
+        "entrega_automatica": bool(intento.entrega_automatica),
+        "en_papel": bool(intento.en_papel),
+        # 2.6: orden en que vio preguntas y opciones (None = el original), ajustado a las preguntas actuales
+        "orden": versiones.normalizar_orden(intento.orden, preguntas) if intento.orden else None,
     }
 
 @app.post("/api/cuestionarios/{cuestionario_id}/intentos")
@@ -414,9 +482,22 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
     if cuestionario is None or not cuestionario.publicado or not clases.estudiante_puede_ver(usuario.id, cuestionario.id, db):
         raise HTTPException(status_code=404, detail="Esta evaluación ya no está disponible.")
 
-    preguntas = cuestionario.preguntas_json or []
-    # Solo se guardan respuestas a preguntas que existen
-    respuestas = {k: v for k, v in datos.respuestas.items() if k.isdigit() and int(k) < len(preguntas)}
+    # Inicio registrado (4.1): obligatorio con tiempo límite o intentos máximos
+    ahora = ahora_utc()
+    inicio = None
+    if datos.inicio_id is not None:
+        inicio = db.query(InicioIntento).filter(InicioIntento.id == datos.inicio_id).first()
+        if inicio is None or inicio.estudiante_id != usuario.id or inicio.cuestionario_id != cuestionario.id:
+            raise HTTPException(status_code=400, detail="No se encontró el inicio de esta evaluación. Vuelve a iniciarla.")
+        if inicio.entregado:
+            raise HTTPException(status_code=409, detail="Este intento ya se entregó.")
+    elif configuracion.requiere_inicio(cuestionario):
+        raise HTTPException(status_code=400, detail="Esta evaluación tiene tiempo o intentos limitados: vuelve a iniciarla.")
+    tiempo_servidor, fuera_de_tiempo = configuracion.evaluar_entrega(cuestionario, inicio, ahora)
+
+    preguntas = preguntas_con_ids(cuestionario, db)
+    # Solo se guardan respuestas a preguntas que existen, como ids de opción
+    respuestas = respuestas_a_ids(preguntas, datos.respuestas)
     # La seguridad solo cuenta en preguntas respondidas
     seguridad = {k: v for k, v in datos.seguridad.items() if k in respuestas}
     resultado = calificar(preguntas, respuestas)
@@ -428,9 +509,15 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
         puntos_obtenidos=resultado["puntos_obtenidos"],
         puntos_totales=resultado["puntos_totales"],
         calificacion=resultado["calificacion"],
-        tiempo_segundos=datos.tiempo_segundos,
+        # Medido en el servidor cuando hay inicio; si no, el que informa el navegador
+        tiempo_segundos=tiempo_servidor if tiempo_servidor is not None else datos.tiempo_segundos,
         seguridad=seguridad,
+        inicio_id=inicio.id if inicio else None,
+        orden=inicio.orden if inicio else None,  # 2.6: la revisión lo muestra en el orden en que lo vio
+        fuera_de_tiempo=fuera_de_tiempo,
     )
+    if inicio is not None:
+        inicio.entregado = True
     try:
         db.add(intento)
         db.commit()
@@ -440,11 +527,15 @@ def entregar_intento(cuestionario_id: int, datos: EntregaIntento, usuario: Usuar
         print(f"ERROR al guardar el intento: {e}")
         raise HTTPException(status_code=500, detail="No se pudo guardar tu evaluación. Intenta entregarla de nuevo.")
 
+    visibles = configuracion.respuestas_visibles(cuestionario, ahora)
     return {
-        "intento": intento_a_dict(intento),
-        "respuestas_correctas": resultado["respuestas_correctas"],
-        "justificaciones": resultado["justificaciones"],
-        "fuentes": resultado["fuentes"],
+        "intento": intento_a_dict(intento, preguntas),
+        # Si el docente no muestra las respuestas (todavía), solo va la calificación
+        "respuestas_visibles": visibles,
+        "respuestas_correctas": resultado["respuestas_correctas"] if visibles else None,
+        "justificaciones": resultado["justificaciones"] if visibles else None,
+        "fuentes": resultado["fuentes"] if visibles else None,
+        "configuracion": configuracion.configuracion_a_dict(cuestionario),
     }
 
 # Va antes de /api/intentos/{intento_id} para que "mios" no se interprete como un id.
@@ -453,13 +544,15 @@ def mis_intentos(usuario: Usuario = Depends(usuario_actual), db: Session = Depen
     """Estudiante: sus intentos (más reciente primero), con el nombre y la materia del examen."""
     if usuario.rol != "estudiante":
         raise HTTPException(status_code=403, detail="Esta sección es solo para estudiantes.")
-    filas = db.query(Intento, Cuestionario.nombre_examen, Cuestionario.nombre_documento, Cuestionario.materia) \
+    configuracion.entregar_vencidos(db, estudiante_id=usuario.id)
+    filas = db.query(Intento, Cuestionario) \
         .join(Cuestionario, Cuestionario.id == Intento.cuestionario_id) \
         .filter(Intento.estudiante_id == usuario.id) \
         .order_by(Intento.fecha.desc()).all()
     return {"data": [
-        {**intento_a_dict(intento), "nombre_examen": nombre or documento, "materia": materia}
-        for intento, nombre, documento, materia in filas
+        {**intento_a_dict(intento, cuestionario.preguntas_json or []),
+         "nombre_examen": cuestionario.nombre_examen or cuestionario.nombre_documento, "materia": cuestionario.materia}
+        for intento, cuestionario in filas
     ]}
 
 @app.get("/api/intentos/{intento_id}")
@@ -474,16 +567,26 @@ def revisar_intento(intento_id: int, usuario: Usuario = Depends(usuario_actual),
         raise HTTPException(status_code=404, detail="Intento no encontrado.")
     if usuario.id not in (intento.estudiante_id, cuestionario.usuario_id):
         raise HTTPException(status_code=403, detail="No puedes ver este intento.")
+    es_docente = usuario.id == cuestionario.usuario_id
+    visibles = es_docente or configuracion.respuestas_visibles(cuestionario, ahora_utc())
+    if es_docente:
+        preguntas_mostradas = cuestionario.preguntas_json or []
+    elif visibles:
+        preguntas_mostradas = valoraciones.sin_valoraciones(cuestionario.preguntas_json)
+    else:
+        preguntas_mostradas = ocultar_respuestas(cuestionario.preguntas_json or [])
     return {
-        "intento": intento_a_dict(intento),
+        "intento": intento_a_dict(intento, cuestionario.preguntas_json or []),
         "examen": {
             "id": cuestionario.id,
             "nombre_examen": cuestionario.nombre_examen or cuestionario.nombre_documento,
             "materia": cuestionario.materia,
-            # La valoración del docente (calidad del generador) no es para el estudiante
-            "preguntas_json": (cuestionario.preguntas_json or []) if usuario.id == cuestionario.usuario_id
-            else valoraciones.sin_valoraciones(cuestionario.preguntas_json),
+            # La valoración del docente (calidad del generador) no es para el estudiante; la clave,
+            # solo si el docente muestra las respuestas (4.1)
+            "preguntas_json": preguntas_mostradas,
+            "configuracion": configuracion.configuracion_a_dict(cuestionario),
         },
+        "respuestas_visibles": visibles,
         # Preguntas de este examen que el estudiante del intento ya reportó
         "preguntas_reportadas": reportes.preguntas_reportadas(intento.estudiante_id, cuestionario.id, db),
     }
@@ -496,6 +599,7 @@ def listar_intentos(cuestionario_id: int, usuario: Usuario = Depends(docente_act
     clases en las que el estudiante está inscrito hoy (para filtrar por clase).
     """
     cuestionario = cuestionario_propio(cuestionario_id, usuario, db)
+    configuracion.entregar_vencidos(db, cuestionario_ids=[cuestionario.id])
     filas = db.query(Intento, Usuario.nombre, Usuario.correo) \
         .join(Usuario, Intento.estudiante_id == Usuario.id) \
         .filter(Intento.cuestionario_id == cuestionario.id) \
@@ -504,7 +608,7 @@ def listar_intentos(cuestionario_id: int, usuario: Usuario = Depends(docente_act
     return {
         "data": [
             {
-                **intento_a_dict(intento),
+                **intento_a_dict(intento, cuestionario.preguntas_json or []),
                 "nombre_estudiante": nombre,
                 "correo_estudiante": correo,
                 "clase_ids": clases_por_estudiante.get(intento.estudiante_id, []),
@@ -513,6 +617,8 @@ def listar_intentos(cuestionario_id: int, usuario: Usuario = Depends(docente_act
         ],
         "clases": clases_asignadas,
         "reportes": reportes.reportes_de_cuestionario(cuestionario.id, db),
+        # Prácticas adaptativas terminadas por estudiante: el docente solo ve el conteo
+        "practicas": practicas.practicas_terminadas_por_estudiante(cuestionario.id, db),
     }
 
 

@@ -33,7 +33,8 @@ def imprimir(nombre: str, d: dict):
 def exportar_csv(cuestionarios, ruta: str):
     with open(ruta, "w", newline="", encoding="utf-8-sig") as archivo:
         escritor = csv.writer(archivo)
-        escritor.writerow(["cuestionario_id", "complejidad", "pregunta", "con_fuente", "cita_literal", "util", "motivo"])
+        # origen: "generada" (al crear el examen) o "regenerada" (4.3, a pedido del docente)
+        escritor.writerow(["cuestionario_id", "complejidad", "pregunta", "origen", "con_fuente", "cita_literal", "util", "motivo"])
         for c in cuestionarios:
             for indice, p in enumerate(c.preguntas_json or []):
                 if not isinstance(p, dict) or not es_generada(p):
@@ -42,7 +43,8 @@ def exportar_csv(cuestionarios, ruta: str):
                 valoracion = p.get("valoracion") or {}
                 util = valoracion.get("util")
                 escritor.writerow([
-                    c.id, c.complejidad or SIN_COMPLEJIDAD, indice, int(bool(fuente)), int(bool(fuente.get("literal"))),
+                    c.id, c.complejidad or SIN_COMPLEJIDAD, indice, p.get("origen") or "generada",
+                    int(bool(fuente)), int(bool(fuente.get("literal"))),
                     "" if util is None else int(util), valoracion.get("motivo") or "",
                 ])
     print(f"\nCSV guardado en {ruta}")
